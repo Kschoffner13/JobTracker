@@ -23,7 +23,7 @@ TABLES = {
         thread_id   STRING,
         subject     STRING,
         sender      STRING,
-        received_at STRING,
+        received_at TIMESTAMP,
         body_raw    STRING,
         ingested_at TIMESTAMP
     """,
@@ -34,6 +34,7 @@ TABLES = {
         status        STRING,
         email_subject STRING,
         sender        STRING,
+        received_at   TIMESTAMP,
         parsed_at     TIMESTAMP
     """,
 }

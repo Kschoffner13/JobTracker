@@ -4,26 +4,24 @@
 # COMMAND ----------
 
 import base64
-import re
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 from pyspark.sql.functions import current_timestamp
 
 spark = SparkSession.builder.getOrCreate()
 
 # COMMAND ----------
 
-# Credentials stored in Databricks Secret Scope (never hardcoded)
 CLIENT_ID     = dbutils.secrets.get(scope="job-tracker", key="google-client-id")
 CLIENT_SECRET = dbutils.secrets.get(scope="job-tracker", key="google-client-secret")
 
-CATALOG       = "job_tracker"
-USERS_TABLE   = f"`{CATALOG}`.`system`.`users`"
-BRONZE_TABLE  = f"`{CATALOG}`.`00_bronze`.`emails`"
-SILVER_TABLE  = f"`{CATALOG}`.`01_silver`.`applications`"
+CATALOG      = "job_tracker"
+USERS_TABLE  = f"`{CATALOG}`.`system`.`users`"
+BRONZE_TABLE = f"`{CATALOG}`.`00_bronze`.`emails`"
 
 JOB_QUERY = (
     'subject:("your application" OR "thank you for applying" OR "application received" '
@@ -31,34 +29,13 @@ JOB_QUERY = (
     '"not moving forward" OR "next steps" OR "hiring process")'
 )
 
-STATUS_PATTERNS = [
-    (r"offer|pleased to offer|congratulations.*position|accept.*offer", "offer"),
-    (r"interview|schedule.*call|speak with you|next steps|hiring manager", "interview"),
-    (r"unfortunately|regret|not.*moving forward|decided.*not|no longer|other candidate", "rejected"),
-    (r"received your application|thank you for apply|application.*received|we have received", "applied"),
-]
-
 # COMMAND ----------
 
-def detect_status(subject: str, body: str) -> str:
-    text = f"{subject} {body}".lower()
-    for pattern, status in STATUS_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return status
-    return "applied"
-
-
-def extract_company(sender: str) -> str:
-    match = re.search(r"@([\w.-]+)", sender)
-    if not match:
-        return "Unknown"
-    domain = match.group(1)
-    personal_domains = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
-    parts = domain.split(".")
-    company_part = parts[-2] if len(parts) >= 2 else parts[0]
-    if company_part in personal_domains:
-        return "Unknown"
-    return company_part.capitalize()
+def parse_date(date_str: str) -> datetime | None:
+    try:
+        return parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        return None
 
 
 def decode_body(payload: dict) -> str:
@@ -82,7 +59,6 @@ def get_watermark(user_id: str) -> str:
     """).collect()[0]
     if row.max_date:
         return row.max_date.strftime("%Y/%m/%d")
-    # No prior scan — fall back to 6 months ago
     return (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y/%m/%d")
 
 
@@ -109,7 +85,6 @@ def scan_user(user_id: str, refresh_token: str):
     existing_ids = get_existing_ids(user_id)
 
     bronze_rows = []
-    silver_rows = []
     page_token = None
 
     while True:
@@ -130,15 +105,16 @@ def scan_user(user_id: str, refresh_token: str):
             ).execute()
 
             headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
-            subject    = headers.get("Subject", "")
-            sender     = headers.get("From", "")
-            received_at = headers.get("Date", "")
-            body       = decode_body(msg["payload"])
-            thread_id  = msg.get("threadId", "")
-
-            bronze_rows.append((user_id, msg_id, thread_id, subject, sender, received_at, body))
-            silver_rows.append((user_id, msg_id, extract_company(sender), detect_status(subject, body), subject, sender))
-            print(f"  + {sender} | {subject}")
+            bronze_rows.append((
+                user_id,
+                msg_id,
+                msg.get("threadId", ""),
+                headers.get("Subject", ""),
+                headers.get("From", ""),
+                parse_date(headers.get("Date", "")),
+                decode_body(msg["payload"]),
+            ))
+            print(f"  + {headers.get('From', '')} | {headers.get('Subject', '')}")
 
         page_token = result.get("nextPageToken")
         if not page_token:
@@ -154,40 +130,23 @@ def scan_user(user_id: str, refresh_token: str):
         StructField("thread_id",   StringType()),
         StructField("subject",     StringType()),
         StructField("sender",      StringType()),
-        StructField("received_at", StringType()),
+        StructField("received_at", TimestampType()),
         StructField("body_raw",    StringType()),
-    ])
-    silver_schema = StructType([
-        StructField("user_id",       StringType()),
-        StructField("message_id",    StringType()),
-        StructField("company",       StringType()),
-        StructField("status",        StringType()),
-        StructField("email_subject", StringType()),
-        StructField("sender",        StringType()),
     ])
 
     bronze_df = spark.createDataFrame(bronze_rows, bronze_schema).withColumn("ingested_at", current_timestamp())
-    silver_df = spark.createDataFrame(silver_rows, silver_schema).withColumn("parsed_at", current_timestamp())
-
     bronze_df.createOrReplaceTempView("_bronze_batch")
-    silver_df.createOrReplaceTempView("_silver_batch")
 
     spark.sql(f"""
         INSERT INTO {BRONZE_TABLE}
         SELECT user_id, message_id, thread_id, subject, sender, received_at, body_raw, ingested_at
         FROM _bronze_batch
     """)
-    spark.sql(f"""
-        INSERT INTO {SILVER_TABLE}
-        SELECT user_id, message_id, company, status, email_subject, sender, parsed_at
-        FROM _silver_batch
-    """)
 
     print(f"  Ingested {len(bronze_rows)} new emails for {user_id}")
 
 # COMMAND ----------
 
-# Main — runs for every registered user
 print(f"[email_sync] Starting at {datetime.now(timezone.utc).isoformat()}")
 
 users = spark.sql(f"""
