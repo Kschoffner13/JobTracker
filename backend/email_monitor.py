@@ -148,9 +148,9 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
             with get_cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO {table('silver', 'applications')} "
-                    f"(user_id, message_id, company, status, email_subject, sender, parsed_at) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, current_timestamp())",
-                    [user_id, msg_id, company, status, subject, sender],
+                    f"(user_id, message_id, company, status, email_subject, sender, received_at, parsed_at) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, current_timestamp())",
+                    [user_id, msg_id, company, status, subject, sender, received_at],
                 )
 
             ingested.append({
