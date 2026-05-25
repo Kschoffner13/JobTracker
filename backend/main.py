@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import auth
 import email_monitor
+import applications
 
 app = FastAPI(title="Job Tracker API", version="1.0")
 
@@ -21,6 +22,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(email_monitor.router)
+app.include_router(applications.router)
 
 
 @app.get("/")

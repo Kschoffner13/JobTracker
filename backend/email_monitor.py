@@ -2,11 +2,13 @@ from fastapi import APIRouter, HTTPException
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import base64
+import hashlib
 import re
 import os
 from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
+from postgres import get_pg_cursor
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
@@ -57,6 +59,10 @@ def build_gmail_service(refresh_token: str):
         client_secret=CLIENT_SECRET,
     )
     return build("gmail", "v1", credentials=creds)
+
+
+def make_job_id(provider: str, thread_id: str) -> str:
+    return hashlib.sha256(f"{provider}:{thread_id}".encode()).hexdigest()[:16]
 
 
 def decode_body(payload: dict) -> str:
@@ -131,14 +137,16 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
             received_at = headers.get("Date", "")
             body = decode_body(msg["payload"])
             thread_id = msg.get("threadId", "")
+            provider = "gmail"
+            job_id = make_job_id(provider, thread_id)
 
             # Bronze — raw email
             with get_cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO {table('bronze', 'emails')} "
-                    f"(user_id, message_id, thread_id, subject, sender, received_at, body_raw, ingested_at) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, ?, current_timestamp())",
-                    [user_id, msg_id, thread_id, subject, sender, received_at, body],
+                    f"(user_id, message_id, thread_id, job_id, provider, subject, sender, received_at, body_raw, ingested_at) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp())",
+                    [user_id, msg_id, thread_id, job_id, provider, subject, sender, received_at, body],
                 )
 
             # Silver — classified
@@ -148,10 +156,12 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
             with get_cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO {table('silver', 'applications')} "
-                    f"(user_id, message_id, company, status, email_subject, sender, received_at, parsed_at) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, ?, current_timestamp())",
-                    [user_id, msg_id, company, status, subject, sender, received_at],
+                    f"(user_id, message_id, job_id, provider, company, position, status, email_subject, sender, received_at, parsed_at) "
+                    f"VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, current_timestamp())",
+                    [user_id, msg_id, job_id, provider, company, status, subject, sender, received_at],
                 )
+
+            sync_to_postgres(user_id, msg_id, job_id, provider, company, status)
 
             ingested.append({
                 "id": msg_id,
@@ -171,6 +181,104 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
     return ingested
 
 
+STATUS_RANK = {"applied": 1, "interview": 2, "offer": 3, "rejected": 4}
+
+
+def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
+                     company: str, status: str):
+    with get_pg_cursor() as pg:
+        # Upsert company
+        pg.execute("""
+            INSERT INTO companies (name) VALUES (%s)
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            RETURNING company_id
+        """, [company])
+        company_id = pg.fetchone()[0]
+
+        # Check if application exists for this job_id
+        pg.execute(
+            "SELECT application_id, current_status FROM applications WHERE job_id = %s AND user_id = %s",
+            [job_id, user_id],
+        )
+        existing = pg.fetchone()
+
+        if not existing:
+            pg.execute("""
+                INSERT INTO applications (user_id, company_id, job_id, provider, current_status, applied_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                RETURNING application_id
+            """, [user_id, company_id, job_id, provider, status])
+            application_id = pg.fetchone()[0]
+            pg.execute(
+                "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",
+                [application_id, status, msg_id],
+            )
+        else:
+            application_id, current_status = existing
+            if STATUS_RANK.get(status, 0) > STATUS_RANK.get(current_status, 0):
+                pg.execute(
+                    "UPDATE applications SET current_status = %s, last_updated = NOW() WHERE application_id = %s",
+                    [status, application_id],
+                )
+                pg.execute(
+                    "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",
+                    [application_id, status, msg_id],
+                )
+
+
+def rebuild_gold_for_user(user_id: str):
+    with get_pg_cursor() as pg:
+        pg.execute("""
+            SELECT a.application_id, a.user_id, a.company_id, c.name,
+                   COALESCE(c.domain, ''), a.job_id, a.provider,
+                   COALESCE(a.position, ''), a.current_status,
+                   a.applied_at, a.last_updated
+            FROM applications a
+            JOIN companies c ON a.company_id = c.company_id
+            WHERE a.user_id = %s
+        """, [user_id])
+        rows = pg.fetchall()
+
+    if not rows:
+        return
+
+    STATUS_ID = {"applied": 1, "interview": 2, "offer": 3, "rejected": 4}
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            f"DELETE FROM {table('gold', 'fact_applications')} WHERE user_id = ?",
+            [user_id],
+        )
+
+        seen_companies = set()
+        for row in rows:
+            _, _, company_id, company_name, domain, *_ = row
+            if company_id not in seen_companies:
+                cursor.execute(
+                    f"DELETE FROM {table('gold', 'dim_companies')} WHERE company_id = ?",
+                    [company_id],
+                )
+                cursor.execute(
+                    f"INSERT INTO {table('gold', 'dim_companies')} (company_id, name, domain) VALUES (?, ?, ?)",
+                    [company_id, company_name, domain],
+                )
+                seen_companies.add(company_id)
+
+        for row in rows:
+            app_id, uid, company_id, _, _, job_id, provider, position, status, applied_at, last_updated = row
+            applied_str = applied_at.strftime("%Y-%m-%d %H:%M:%S") if applied_at else None
+            updated_str = last_updated.strftime("%Y-%m-%d %H:%M:%S") if last_updated else None
+            cursor.execute(
+                f"INSERT INTO {table('gold', 'fact_applications')} "
+                f"(application_id, user_id, company_id, status_id, job_id, provider, position, applied_at, last_updated) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [app_id, uid, company_id, STATUS_ID.get(status, 1),
+                 job_id, provider, position, applied_str, updated_str],
+            )
+
+    print(f"[gold] Rebuilt for {user_id}: {len(rows)} applications")
+
+
 @router.post("/emails/scan")
 def scan_emails(user: CurrentUser):
     user_id = user["sub"]
@@ -187,6 +295,7 @@ def scan_emails(user: CurrentUser):
 
     after_date = get_watermark(user_id)
     emails = run_scan(user_id, row[0], after_date)
+    rebuild_gold_for_user(user_id)
 
     return {"new": len(emails), "emails": emails}
 

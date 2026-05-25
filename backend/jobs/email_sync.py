@@ -4,6 +4,7 @@
 # COMMAND ----------
 
 import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from google.oauth2.credentials import Credentials
@@ -36,6 +37,10 @@ def parse_date(date_str: str) -> datetime | None:
         return parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return None
+
+
+def make_job_id(provider: str, thread_id: str) -> str:
+    return hashlib.sha256(f"{provider}:{thread_id}".encode()).hexdigest()[:16]
 
 
 def decode_body(payload: dict) -> str:
@@ -105,10 +110,14 @@ def scan_user(user_id: str, refresh_token: str):
             ).execute()
 
             headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+            thread_id = msg.get("threadId", "")
+            provider = "gmail"
             bronze_rows.append((
                 user_id,
                 msg_id,
-                msg.get("threadId", ""),
+                thread_id,
+                make_job_id(provider, thread_id),
+                provider,
                 headers.get("Subject", ""),
                 headers.get("From", ""),
                 parse_date(headers.get("Date", "")),
@@ -128,6 +137,8 @@ def scan_user(user_id: str, refresh_token: str):
         StructField("user_id",     StringType()),
         StructField("message_id",  StringType()),
         StructField("thread_id",   StringType()),
+        StructField("job_id",      StringType()),
+        StructField("provider",    StringType()),
         StructField("subject",     StringType()),
         StructField("sender",      StringType()),
         StructField("received_at", TimestampType()),
@@ -139,7 +150,7 @@ def scan_user(user_id: str, refresh_token: str):
 
     spark.sql(f"""
         INSERT INTO {BRONZE_TABLE}
-        SELECT user_id, message_id, thread_id, subject, sender, received_at, body_raw, ingested_at
+        SELECT user_id, message_id, thread_id, job_id, provider, subject, sender, received_at, body_raw, ingested_at
         FROM _bronze_batch
     """)
 

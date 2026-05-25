@@ -6,6 +6,7 @@ import jwt
 import os
 import datetime
 from db import get_cursor, table
+from postgres import get_pg_cursor
 from email_monitor import run_scan
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -104,6 +105,15 @@ def google_auth(body: GoogleAuthRequest, background_tasks: BackgroundTasks):
                 [user_id, email, info.get("name", ""), info.get("picture", ""), new_refresh_token],
             )
         is_new_user = True
+
+    # Upsert user in Postgres
+    with get_pg_cursor() as pg:
+        pg.execute("""
+            INSERT INTO users (user_id, email, name, picture)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE
+            SET email = EXCLUDED.email, name = EXCLUDED.name, picture = EXCLUDED.picture
+        """, [user_id, email, info.get("name", ""), info.get("picture", "")])
 
     if is_new_user:
         print(f"[auth] New user {email} — starting 6-month background scan")
