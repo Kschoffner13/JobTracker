@@ -1,3 +1,6 @@
+# Handles Google OAuth sign-in: exchanges the auth code for tokens, upserts the user in
+# Databricks and Postgres, issues a 30-day JWT, and kicks off a background email scan for new users.
+
 from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
 from pydantic import BaseModel
 from googleapiclient.discovery import build

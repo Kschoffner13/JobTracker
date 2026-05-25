@@ -1,3 +1,6 @@
+# Databricks SQL connection helper. Provides get_cursor() (context manager that opens/closes
+# a connection per call) and table() (builds a fully-qualified Delta table name from schema + table).
+
 from databricks import sql
 from contextlib import contextmanager
 import os

@@ -1,3 +1,6 @@
+# Entry point for the FastAPI application. Loads environment variables, configures CORS,
+# and registers the auth, email, and applications routers.
+
 from dotenv import load_dotenv
 load_dotenv()
 

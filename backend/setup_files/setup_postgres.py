@@ -1,7 +1,6 @@
-"""
-Run once to create normalized Postgres tables.
-Usage: python setup_postgres.py
-"""
+# One-time setup script that creates the normalized Postgres (Supabase) schema: users,
+# companies, applications, status_events, and notes. Run before starting the server.
+# Usage: python setup_postgres.py
 from dotenv import load_dotenv
 load_dotenv()
 

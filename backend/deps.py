@@ -1,3 +1,6 @@
+# FastAPI dependency that validates the Bearer JWT on every protected route and injects
+# the decoded user payload. Import CurrentUser and use it as a type annotation in route handlers.
+
 from fastapi import Header, HTTPException, Depends
 from typing import Annotated
 import jwt

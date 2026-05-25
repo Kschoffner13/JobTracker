@@ -1,3 +1,6 @@
+# Postgres (Supabase) connection pool. Provides get_pg_cursor() — a context manager that
+# checks out a connection, yields a cursor, commits on success, and rolls back on error.
+
 from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 import os

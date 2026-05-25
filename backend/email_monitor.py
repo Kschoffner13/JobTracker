@@ -1,3 +1,7 @@
+# Gmail scanning and ingestion pipeline. Fetches job-related emails via the Gmail API,
+# writes raw messages to Databricks Bronze, classifies them into Silver, syncs normalized
+# records to Postgres, and rebuilds the Gold star schema after each scan.
+
 from fastapi import APIRouter, HTTPException
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build

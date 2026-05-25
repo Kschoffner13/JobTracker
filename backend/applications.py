@@ -1,3 +1,6 @@
+# REST endpoints for managing job applications stored in Postgres. Supports listing,
+# updating (company/position/status), status history, notes, and analytics summary.
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from deps import CurrentUser

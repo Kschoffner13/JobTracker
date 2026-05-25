@@ -1,3 +1,6 @@
+# Databricks scheduled notebook that runs as a background job (every 10 min via cron).
+# Scans Gmail for all users with a stored refresh token and writes new job-related emails
+# to the Bronze Delta table. Silver classification is handled by the FastAPI backend.
 # Databricks notebook source
 # MAGIC %pip install google-auth>=2.38.0 google-auth-oauthlib>=1.2.0 google-api-python-client>=2.166.0
 

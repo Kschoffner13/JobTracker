@@ -1,7 +1,6 @@
-"""
-Run once to create the Delta tables in Databricks.
-Usage: python setup_db.py
-"""
+# One-time setup script that creates all Databricks Delta schemas and tables (system, Bronze,
+# Silver, Gold) and seeds the dim_status lookup table. Run before starting the server.
+# Usage: python setup_db.py
 from dotenv import load_dotenv
 load_dotenv()
 
