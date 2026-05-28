@@ -5,53 +5,17 @@
 from fastapi import APIRouter, HTTPException
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-import base64
-import hashlib
-import re
 import os
 from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
 from postgres import get_pg_cursor
+from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-
-JOB_QUERY = (
-    'subject:("your application" OR "thank you for applying" OR "application received" '
-    'OR interview OR "job offer" OR offer OR rejected OR "we regret" OR '
-    '"not moving forward" OR "next steps" OR "hiring process")'
-)
-
-STATUS_PATTERNS = [
-    (r"offer|pleased to offer|congratulations.*position|accept.*offer", "offer"),
-    (r"interview|schedule.*call|speak with you|next steps|hiring manager", "interview"),
-    (r"unfortunately|regret|not.*moving forward|decided.*not|no longer|other candidate", "rejected"),
-    (r"received your application|thank you for apply|application.*received|we have received", "applied"),
-]
-
-
-def detect_status(subject: str, body: str) -> str:
-    text = f"{subject} {body}".lower()
-    for pattern, status in STATUS_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return status
-    return "applied"
-
-
-def extract_company(sender: str) -> str:
-    match = re.search(r"@([\w.-]+)", sender)
-    if not match:
-        return "Unknown"
-    domain = match.group(1)
-    personal_domains = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
-    parts = domain.split(".")
-    company_part = parts[-2] if len(parts) >= 2 else parts[0]
-    if company_part in personal_domains:
-        return "Unknown"
-    return company_part.capitalize()
 
 
 def build_gmail_service(refresh_token: str):
@@ -63,33 +27,6 @@ def build_gmail_service(refresh_token: str):
         client_secret=CLIENT_SECRET,
     )
     return build("gmail", "v1", credentials=creds)
-
-
-def make_job_id(provider: str, thread_id: str) -> str:
-    return hashlib.sha256(f"{provider}:{thread_id}".encode()).hexdigest()[:16]
-
-
-def decode_body(payload: dict) -> str:
-    def _decode(data: str) -> str:
-        return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")[:2000]
-
-    def _search(parts: list, mime: str) -> str:
-        for part in parts:
-            if part.get("mimeType") == mime:
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    return _decode(data)
-            if "parts" in part:
-                result = _search(part["parts"], mime)
-                if result:
-                    return result
-        return ""
-
-    if "parts" in payload:
-        return _search(payload["parts"], "text/plain") or _search(payload["parts"], "text/html")
-
-    data = payload.get("body", {}).get("data", "")
-    return _decode(data) if data else ""
 
 
 def get_watermark(user_id: str) -> str | None:

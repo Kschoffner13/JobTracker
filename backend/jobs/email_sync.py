@@ -10,9 +10,10 @@
 # MAGIC %pip install google-auth>=2.38.0 google-auth-oauthlib>=1.2.0 google-api-python-client>=2.166.0
 
 # COMMAND ----------
+# MAGIC %run ../email_config
 
-import base64
-import hashlib
+# COMMAND ----------
+
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from google.oauth2.credentials import Credentials
@@ -32,13 +33,6 @@ CATALOG      = "job_tracker"
 USERS_TABLE  = f"`{CATALOG}`.`system`.`users`"
 BRONZE_TABLE = f"`{CATALOG}`.`00_bronze`.`emails`"
 
-JOB_QUERY = (
-    'subject:("your application" OR "thank you for applying" OR "application received" '
-    'OR interview OR "job offer" OR offer OR rejected OR "we regret" OR '
-    '"not moving forward" OR "next steps" OR "hiring process" OR '
-    '"got your resume" OR "application is complete")'
-)
-
 # COMMAND ----------
 
 def parse_date(date_str: str) -> datetime | None:
@@ -46,33 +40,6 @@ def parse_date(date_str: str) -> datetime | None:
         return parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return None
-
-
-def make_job_id(provider: str, thread_id: str) -> str:
-    return hashlib.sha256(f"{provider}:{thread_id}".encode()).hexdigest()[:16]
-
-
-def decode_body(payload: dict) -> str:
-    def _decode(data: str) -> str:
-        return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")[:2000]
-
-    def _search(parts: list, mime: str) -> str:
-        for part in parts:
-            if part.get("mimeType") == mime:
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    return _decode(data)
-            if "parts" in part:
-                result = _search(part["parts"], mime)
-                if result:
-                    return result
-        return ""
-
-    if "parts" in payload:
-        return _search(payload["parts"], "text/plain") or _search(payload["parts"], "text/html")
-
-    data = payload.get("body", {}).get("data", "")
-    return _decode(data) if data else ""
 
 
 def get_watermark(user_id: str) -> str:
