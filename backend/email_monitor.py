@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
 from postgres import get_pg_cursor
-from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company
+from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
@@ -103,13 +103,14 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
             # Silver — classified
             status = detect_status(subject, body)
             company = extract_company(sender)
+            position = extract_position(subject, body)
 
             with get_cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO {table('silver', 'applications')} "
                     f"(user_id, message_id, job_id, provider, company, position, status, email_subject, sender, received_at, parsed_at) "
-                    f"VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, current_timestamp())",
-                    [user_id, msg_id, job_id, provider, company, status, subject, sender, received_at],
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp())",
+                    [user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at],
                 )
 
             sync_to_postgres(user_id, msg_id, job_id, provider, company, status)

@@ -23,6 +23,7 @@ SILVER_TABLE = f"`{CATALOG}`.`01_silver`.applications"
 # Wrap shared functions as Spark UDFs for DataFrame operations
 detect_status_udf   = F.udf(detect_status, StringType())
 extract_company_udf = F.udf(extract_company, StringType())
+extract_position_udf = F.udf(extract_position, StringType())
 
 # COMMAND ----------
 
@@ -44,7 +45,7 @@ else:
         new_bronze
         .withColumn("status",        detect_status_udf(F.col("subject"), F.col("body_raw")))
         .withColumn("company",       extract_company_udf(F.col("sender")))
-        .withColumn("position",      F.lit(None).cast(StringType()))
+        .withColumn("position",      extract_position_udf(F.col("subject"), F.col("body_raw")))
         .withColumn("email_subject", F.col("subject"))
         .withColumn("parsed_at",     F.current_timestamp())
         .select(

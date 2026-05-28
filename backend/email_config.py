@@ -2,12 +2,17 @@
 # Shared email scanning configuration used by both the FastAPI backend (email_monitor.py)
 # and the Databricks pipeline notebooks (email_sync.py, bronze_to_silver.py).
 # Change JOB_QUERY or classification logic here and both pipelines pick it up automatically.
+# Set USE_AI_CLASSIFICATION=true in .env to use Claude Haiku instead of regex patterns.
 
 # COMMAND ----------
 
 import base64
 import hashlib
+import json
+import os
 import re
+
+USE_AI_CLASSIFICATION = os.getenv("USE_AI_CLASSIFICATION", "false").lower() == "true"
 
 # COMMAND ----------
 
@@ -19,8 +24,8 @@ JOB_QUERY = (
 )
 
 STATUS_PATTERNS = [
-    (r"offer|pleased to offer|congratulations.*position|accept.*offer", "offer"),
-    (r"interview|schedule.*call|speak with you|next steps|hiring manager", "interview"),
+    (r"pleased to offer|offer of employment|extend.*offer|we.*like to offer|offer letter|job offer", "offer"),
+    (r"invite.*interview|schedule.*interview|interview.*invitation|would like to interview|phone screen|moving.*forward.*interview", "interview"),
     (r"unfortunately|regret|not.*moving forward|decided.*not|no longer|other candidate", "rejected"),
     (r"received your application|thank you for apply|application.*received|we have received", "applied"),
 ]
@@ -54,7 +59,77 @@ def decode_body(payload: dict) -> str:
     return _decode(data) if data else ""
 
 
+_POSITION_PATTERNS = [
+    # "for [the/a] POSITION [role/position/job] [at/with/-]"
+    r"for (?:the |a |an )?(.+?)(?:\s+(?:role|position|job|opening)\b|\s+(?:at|with|@)\s+|\s*[-–—]\s*|\s*$)",
+    # "applying for/to [the] POSITION"
+    r"applying (?:for|to) (?:the |a |an )?(.+?)(?:\s+(?:role|position|job)\b|\s+(?:at|with|@)\s+|\s*[-–—]|\s*$)",
+    # "Re: POSITION Application/Role"
+    r"re:\s*(.+?)\s+(?:application|role|position|job)\b",
+    # "POSITION - Application" at start of subject
+    r"^(.+?)\s*[-–—]\s*(?:application|your application|job application)\b",
+    # "your POSITION application/candidacy"
+    r"your\s+(.+?)\s+(?:application|candidacy)\b",
+    # "application: [for] POSITION"
+    r"application[:\s]+(?:for\s+)?(?:the\s+)?(.+?)(?:\s+(?:at|with)\s+|\s*[-–—]|\s*$)",
+]
+
+
+def _classify_with_ai(subject: str, body: str) -> dict | None:
+    """Call Claude Haiku to classify status and extract position in one API call.
+    Returns {"status": str, "position": str | None} or None on any failure.
+    Disable by setting USE_AI_CLASSIFICATION=false in .env.
+    """
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=128,
+            system="You classify job application emails. Respond with only a JSON object, no explanation.",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Subject: {subject or ''}\n"
+                    f"Body: {(body or '')[:800]}\n\n"
+                    "Return JSON:\n"
+                    '{"status": "applied|interview|offer|rejected", "position": "job title or null"}'
+                ),
+            }],
+        )
+        data = json.loads(response.content[0].text.strip())
+        status = data.get("status", "applied")
+        if status not in {"applied", "interview", "offer", "rejected"}:
+            status = "applied"
+        position = data.get("position")
+        if not isinstance(position, str) or not position.strip():
+            position = None
+        return {"status": status, "position": position}
+    except Exception:
+        return None
+
+
+def extract_position(subject: str, body: str) -> str | None:
+    if USE_AI_CLASSIFICATION:
+        result = _classify_with_ai(subject, body)
+        if result:
+            return result["position"]
+    for text in [(subject or ""), (body or "")[:500]]:
+        for pattern in _POSITION_PATTERNS:
+            match = re.search(pattern, text.strip(), re.IGNORECASE)
+            if match:
+                pos = match.group(1).strip().rstrip(".,;:")
+                word_count = len(pos.split())
+                if 2 <= word_count <= 8 and len(pos) <= 80:
+                    return pos.title() if pos.islower() else pos
+    return None
+
+
 def detect_status(subject: str, body: str) -> str:
+    if USE_AI_CLASSIFICATION:
+        result = _classify_with_ai(subject, body)
+        if result:
+            return result["status"]
     text = f"{subject or ''} {body or ''}".lower()
     for pattern, status in STATUS_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
