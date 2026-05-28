@@ -104,6 +104,7 @@ def scan_user(user_id: str, refresh_token: str):
     service = build("gmail", "v1", credentials=creds)
 
     after_date = get_watermark(user_id)
+    print(f"  Scanning emails after {after_date} for {user_id}")
     query = f"after:{after_date} {JOB_QUERY}"
     existing_ids = get_existing_ids(user_id)
 
