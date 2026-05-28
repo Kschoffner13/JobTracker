@@ -75,6 +75,43 @@ _POSITION_PATTERNS = [
 ]
 
 
+_POSITION_NOISE = re.compile(
+    r"^(?:was sent to|is sent to|applying to|applied to|your application to|"
+    r"application to|applying for the|applying for|applying\s+\w+\s*$|"
+    r"to\s+(?:the\s+)?(?=\w)|our\s+|received by|track it here|"
+    r"\(?junior\s+data\s+engineer\s+position\)?$)",
+    re.IGNORECASE,
+)
+_POSITION_TRAILING = re.compile(
+    r"\s*(?:application|is complete|position[!.]?|!|\.|,\s*koen!?)$",
+    re.IGNORECASE,
+)
+_POSITION_GENERIC = {
+    "your application", "your application!", "applying to work",
+    "applying", "track it here", "none",
+}
+_POSITION_ID_PREFIX = re.compile(r"^\d+\w+\s+")
+
+
+def _clean_position(pos: str | None) -> str | None:
+    """Strip noise patterns the AI commonly returns instead of null."""
+    if not pos or not isinstance(pos, str):
+        return None
+    pos = pos.strip().strip('"')
+    if pos.lower() in _POSITION_GENERIC:
+        return None
+    if _POSITION_NOISE.match(pos):
+        # try to salvage by stripping the bad prefix
+        cleaned = _POSITION_NOISE.sub("", pos).strip()
+        pos = cleaned if len(cleaned) > 3 else None
+    if pos:
+        pos = _POSITION_TRAILING.sub("", pos).strip()
+        pos = _POSITION_ID_PREFIX.sub("", pos).strip()
+    if not pos or len(pos) < 4:
+        return None
+    return pos
+
+
 def _classify_with_ai(subject: str, body: str) -> dict | None:
     """Call Claude Haiku to classify status and extract position in one API call.
     Returns {"status": str, "position": str | None} or None on any failure.
@@ -87,28 +124,43 @@ def _classify_with_ai(subject: str, body: str) -> dict | None:
             model="claude-haiku-4-5",
             max_tokens=150,
             system=(
-                "You help a job seeker track their job applications by analyzing emails.\n\n"
-                "Extract two things:\n\n"
-                "1. STATUS — the current stage of the job application:\n"
-                "   applied       — application was submitted or received by the employer\n"
-                "   interview     — the person is invited to interview, or an interview is being scheduled/confirmed\n"
-                "   offer         — a job offer has been extended to the person\n"
-                "   rejected      — the application was declined or they are not moving forward\n"
-                "   not_applicable — this is NOT a job application email (e.g. promotions, newsletters,\n"
-                "                   marketing emails, research studies, bank offers, unrelated)\n\n"
-                "2. POSITION — the specific job title or role the person applied for.\n"
-                "   Extract ONLY the role title itself, e.g. 'Senior Software Engineer' or 'Full Stack Developer'.\n"
-                "   Do NOT include: company names, action words ('applying to', 'sent to', 'applying for'),\n"
-                "   filler phrases, or anything that is not the actual job title.\n"
-                "   Return null if the email does not mention a specific role title.\n\n"
-                "Respond with only a JSON object, no explanation."
+                "You help a job seeker track their job applications.\n\n"
+                "Given an email, return a JSON object with:\n"
+                '  "status": one of applied / interview / offer / rejected / not_applicable\n'
+                '  "position": the exact job title (e.g. "Software Engineer"), or null\n\n'
+                "STATUS rules:\n"
+                "  applied        — application submitted or received\n"
+                "  interview      — interview invited, scheduled, reminder, or calendar invite\n"
+                "  offer          — job offer extended\n"
+                "  rejected       — application declined\n"
+                "  not_applicable — promotions, newsletters, bank offers, research studies, unrelated\n\n"
+                "POSITION rules — return the job title ONLY. Return null when:\n"
+                "  - The subject only names a company with no role (e.g. 'sent to Synechron', 'applying to MongoDB')\n"
+                "  - No specific role title is mentioned\n"
+                "  - The email is not a job application\n"
+                "Strip prefixes like 'our', 'the', job ID numbers. Strip suffixes like 'Application', 'is complete'.\n\n"
+                "Examples (any industry):\n"
+                '  "Your application was sent to Acme Corp" → {"status":"applied","position":null}\n'
+                '  "Thank you for applying to Acme Corp" → {"status":"applied","position":null}\n'
+                '  "We received your application for Marketing Manager at Acme" → {"status":"applied","position":"Marketing Manager"}\n'
+                '  "Your application to Data Analyst at Acme Corp" → {"status":"applied","position":"Data Analyst"}\n'
+                '  "Thank you for applying! - Junior Sales Representative, West Region" → {"status":"applied","position":"Junior Sales Representative"}\n'
+                '  "Next Steps for Product Manager Application" → {"status":"applied","position":"Product Manager"}\n'
+                '  "Update on your application for UX Designer, Entry Level" → {"status":"applied","position":"UX Designer, Entry Level"}\n'
+                '  "We regret to inform you - Finance Analyst role" → {"status":"rejected","position":"Finance Analyst"}\n'
+                '  "Interview Reminder with Acme Corp" → {"status":"interview","position":null}\n'
+                '  "Upcoming Interview Starting Soon" → {"status":"interview","position":null}\n'
+                '  "Invitation: Interview for Operations Manager role" → {"status":"interview","position":"Operations Manager"}\n'
+                '  "Congratulations! We would like to offer you the Project Manager position" → {"status":"offer","position":"Project Manager"}\n'
+                '  "Special offer: 50% off your next purchase" → {"status":"not_applicable","position":null}\n'
+                '  "Limited Time Offer: Special Rates" → {"status":"not_applicable","position":null}\n'
+                "Respond with only the JSON object."
             ),
             messages=[{
                 "role": "user",
                 "content": (
                     f"Subject: {subject or ''}\n"
-                    f"Body: {(body or '')[:800]}\n\n"
-                    'Return: {"status": "applied|interview|offer|rejected|not_applicable", "position": "job title or null"}'
+                    f"Body: {(body or '')[:800]}"
                 ),
             }],
         )
@@ -116,9 +168,7 @@ def _classify_with_ai(subject: str, body: str) -> dict | None:
         status = data.get("status", "applied")
         if status not in {"applied", "interview", "offer", "rejected", "not_applicable"}:
             status = "applied"
-        position = data.get("position")
-        if not isinstance(position, str) or not position.strip():
-            position = None
+        position = _clean_position(data.get("position"))
         return {"status": status, "position": position}
     except Exception:
         return None
