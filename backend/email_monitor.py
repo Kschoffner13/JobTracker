@@ -70,16 +70,26 @@ def make_job_id(provider: str, thread_id: str) -> str:
 
 
 def decode_body(payload: dict) -> str:
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part.get("mimeType") == "text/plain":
+    def _decode(data: str) -> str:
+        return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")[:2000]
+
+    def _search(parts: list, mime: str) -> str:
+        for part in parts:
+            if part.get("mimeType") == mime:
                 data = part.get("body", {}).get("data", "")
                 if data:
-                    return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")[:2000]
+                    return _decode(data)
+            if "parts" in part:
+                result = _search(part["parts"], mime)
+                if result:
+                    return result
+        return ""
+
+    if "parts" in payload:
+        return _search(payload["parts"], "text/plain") or _search(payload["parts"], "text/html")
+
     data = payload.get("body", {}).get("data", "")
-    if data:
-        return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")[:2000]
-    return ""
+    return _decode(data) if data else ""
 
 
 def get_watermark(user_id: str) -> str | None:
