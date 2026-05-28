@@ -1,15 +1,16 @@
+# Databricks notebook source
 # Databricks pipeline notebook: Bronze → Silver
 # Reads emails from Bronze that have not yet been classified, applies regex-based status
 # detection and company extraction, then inserts the results into the Silver table.
-# Databricks notebook source
+
+# COMMAND ----------
+# MAGIC %run ../email_config
 
 # COMMAND ----------
 
-import re
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
-from datetime import datetime, timezone
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -19,38 +20,8 @@ CATALOG      = "job_tracker"
 BRONZE_TABLE = f"`{CATALOG}`.`00_bronze`.emails"
 SILVER_TABLE = f"`{CATALOG}`.`01_silver`.applications"
 
-# COMMAND ----------
-
-STATUS_PATTERNS = [
-    (r"offer|pleased to offer|congratulations.*position|accept.*offer", "offer"),
-    (r"interview|schedule.*call|speak with you|next steps|hiring manager", "interview"),
-    (r"unfortunately|regret|not.*moving forward|decided.*not|no longer|other candidate", "rejected"),
-    (r"received your application|thank you for apply|application.*received|we have received", "applied"),
-]
-
-
-def detect_status(subject: str, body: str) -> str:
-    text = f"{subject or ''} {body or ''}".lower()
-    for pattern, status in STATUS_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return status
-    return "applied"
-
-
-def extract_company(sender: str) -> str:
-    match = re.search(r"@([\w.-]+)", sender or "")
-    if not match:
-        return "Unknown"
-    domain = match.group(1)
-    personal_domains = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
-    parts = domain.split(".")
-    company_part = parts[-2] if len(parts) >= 2 else parts[0]
-    if company_part in personal_domains:
-        return "Unknown"
-    return company_part.capitalize()
-
-
-detect_status_udf  = F.udf(detect_status, StringType())
+# Wrap shared functions as Spark UDFs for DataFrame operations
+detect_status_udf   = F.udf(detect_status, StringType())
 extract_company_udf = F.udf(extract_company, StringType())
 
 # COMMAND ----------
