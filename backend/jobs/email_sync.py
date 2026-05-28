@@ -35,7 +35,8 @@ BRONZE_TABLE = f"`{CATALOG}`.`00_bronze`.`emails`"
 JOB_QUERY = (
     'subject:("your application" OR "thank you for applying" OR "application received" '
     'OR interview OR "job offer" OR offer OR rejected OR "we regret" OR '
-    '"not moving forward" OR "next steps" OR "hiring process")'
+    '"not moving forward" OR "next steps" OR "hiring process" OR '
+    '"got your resume" OR "application is complete")'
 )
 
 # COMMAND ----------
