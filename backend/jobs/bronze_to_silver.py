@@ -4,6 +4,12 @@
 # detection and company extraction, then inserts the results into the Silver table.
 
 # COMMAND ----------
+
+import os
+os.environ["ANTHROPIC_API_KEY"]     = dbutils.secrets.get(scope="job-tracker", key="anthropic-api-key")
+os.environ["USE_AI_CLASSIFICATION"] = dbutils.secrets.get(scope="job-tracker", key="use-ai-classification")
+
+# COMMAND ----------
 # MAGIC %run ../email_config
 
 # COMMAND ----------
@@ -36,7 +42,8 @@ new_bronze = spark.sql(f"""
 """)
 
 count = new_bronze.count()
-print(f"[bronze_to_silver] {count} new row(s) to classify")
+ai_mode = "AI (Claude Haiku)" if USE_AI_CLASSIFICATION else "regex"
+print(f"[bronze_to_silver] {count} new row(s) to classify using {ai_mode}")
 
 if count == 0:
     print("[bronze_to_silver] Nothing to do")
@@ -64,4 +71,4 @@ else:
         FROM _silver_batch
     """)
 
-    print(f"[bronze_to_silver] Inserted {count} row(s) into Silver")
+    print(f"[bronze_to_silver] Inserted {count} row(s) into Silver using {ai_mode}")
