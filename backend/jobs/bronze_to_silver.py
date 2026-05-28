@@ -14,9 +14,9 @@ os.environ["USE_AI_CLASSIFICATION"] = dbutils.secrets.get(scope="job-tracker", k
 
 # COMMAND ----------
 
+from datetime import datetime, timezone
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.types import StringType
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -26,16 +26,12 @@ CATALOG      = "job_tracker"
 BRONZE_TABLE = f"`{CATALOG}`.`00_bronze`.emails"
 SILVER_TABLE = f"`{CATALOG}`.`01_silver`.applications"
 
-# Wrap shared functions as Spark UDFs for DataFrame operations
-detect_status_udf   = F.udf(detect_status, StringType())
-extract_company_udf = F.udf(extract_company, StringType())
-extract_position_udf = F.udf(extract_position, StringType())
-
 # COMMAND ----------
 
 # Find Bronze rows that have no matching Silver row yet
 new_bronze = spark.sql(f"""
-    SELECT b.*
+    SELECT b.user_id, b.message_id, b.job_id, b.provider,
+           b.sender, b.subject, b.body_raw, b.received_at
     FROM {BRONZE_TABLE} b
     LEFT JOIN {SILVER_TABLE} s ON b.message_id = s.message_id
     WHERE s.message_id IS NULL
@@ -48,20 +44,37 @@ print(f"[bronze_to_silver] {count} new row(s) to classify using {ai_mode}")
 if count == 0:
     print("[bronze_to_silver] Nothing to do")
 else:
-    silver_df = (
-        new_bronze
-        .withColumn("status",        detect_status_udf(F.col("subject"), F.col("body_raw")))
-        .withColumn("company",       extract_company_udf(F.col("sender")))
-        .withColumn("position",      extract_position_udf(F.col("subject"), F.col("body_raw")))
-        .withColumn("email_subject", F.col("subject"))
-        .withColumn("parsed_at",     F.current_timestamp())
-        .select(
-            "user_id", "message_id", "job_id", "provider",
-            "company", "position", "status", "email_subject",
-            "sender", "received_at", "parsed_at",
-        )
-    )
+    # Collect to driver so AI API calls run here (workers don't have the API key)
+    rows = new_bronze.collect()
+    parsed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    classified = []
 
+    for row in rows:
+        status   = detect_status(row.subject, row.body_raw)
+        company  = extract_company(row.sender)
+        position = extract_position(row.subject, row.body_raw)
+        classified.append((
+            row.user_id, row.message_id, row.job_id, row.provider,
+            company, position, status, row.subject,
+            row.sender, row.received_at, parsed_at,
+        ))
+        print(f"  [{ai_mode}] {row.sender} | {row.subject} → {status} | {position}")
+
+    silver_schema = StructType([
+        StructField("user_id",       StringType()),
+        StructField("message_id",    StringType()),
+        StructField("job_id",        StringType()),
+        StructField("provider",      StringType()),
+        StructField("company",       StringType()),
+        StructField("position",      StringType()),
+        StructField("status",        StringType()),
+        StructField("email_subject", StringType()),
+        StructField("sender",        StringType()),
+        StructField("received_at",   TimestampType()),
+        StructField("parsed_at",     TimestampType()),
+    ])
+
+    silver_df = spark.createDataFrame(classified, silver_schema)
     silver_df.createOrReplaceTempView("_silver_batch")
 
     spark.sql(f"""
