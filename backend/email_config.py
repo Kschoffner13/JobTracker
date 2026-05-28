@@ -85,21 +85,36 @@ def _classify_with_ai(subject: str, body: str) -> dict | None:
         client = anthropic.Anthropic()
         response = client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=128,
-            system="You classify job application emails. Respond with only a JSON object, no explanation.",
+            max_tokens=150,
+            system=(
+                "You help a job seeker track their job applications by analyzing emails.\n\n"
+                "Extract two things:\n\n"
+                "1. STATUS — the current stage of the job application:\n"
+                "   applied       — application was submitted or received by the employer\n"
+                "   interview     — the person is invited to interview, or an interview is being scheduled/confirmed\n"
+                "   offer         — a job offer has been extended to the person\n"
+                "   rejected      — the application was declined or they are not moving forward\n"
+                "   not_applicable — this is NOT a job application email (e.g. promotions, newsletters,\n"
+                "                   marketing emails, research studies, bank offers, unrelated)\n\n"
+                "2. POSITION — the specific job title or role the person applied for.\n"
+                "   Extract ONLY the role title itself, e.g. 'Senior Software Engineer' or 'Full Stack Developer'.\n"
+                "   Do NOT include: company names, action words ('applying to', 'sent to', 'applying for'),\n"
+                "   filler phrases, or anything that is not the actual job title.\n"
+                "   Return null if the email does not mention a specific role title.\n\n"
+                "Respond with only a JSON object, no explanation."
+            ),
             messages=[{
                 "role": "user",
                 "content": (
                     f"Subject: {subject or ''}\n"
                     f"Body: {(body or '')[:800]}\n\n"
-                    "Return JSON:\n"
-                    '{"status": "applied|interview|offer|rejected", "position": "job title or null"}'
+                    'Return: {"status": "applied|interview|offer|rejected|not_applicable", "position": "job title or null"}'
                 ),
             }],
         )
         data = json.loads(response.content[0].text.strip())
         status = data.get("status", "applied")
-        if status not in {"applied", "interview", "offer", "rejected"}:
+        if status not in {"applied", "interview", "offer", "rejected", "not_applicable"}:
             status = "applied"
         position = data.get("position")
         if not isinstance(position, str) or not position.strip():
@@ -112,8 +127,11 @@ def _classify_with_ai(subject: str, body: str) -> dict | None:
 def extract_position(subject: str, body: str) -> str | None:
     if USE_AI_CLASSIFICATION:
         result = _classify_with_ai(subject, body)
-        if result:
+        # not_applicable means no real job title to extract
+        if result and result["status"] != "not_applicable":
             return result["position"]
+        if result and result["status"] == "not_applicable":
+            return None
     for text in [(subject or ""), (body or "")[:500]]:
         for pattern in _POSITION_PATTERNS:
             match = re.search(pattern, text.strip(), re.IGNORECASE)
@@ -128,8 +146,9 @@ def extract_position(subject: str, body: str) -> str | None:
 def detect_status(subject: str, body: str) -> str:
     if USE_AI_CLASSIFICATION:
         result = _classify_with_ai(subject, body)
-        if result:
+        if result and result["status"] != "not_applicable":
             return result["status"]
+        # not_applicable: fall through to regex as a second opinion
     text = f"{subject or ''} {body or ''}".lower()
     for pattern, status in STATUS_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
