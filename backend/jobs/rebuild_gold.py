@@ -7,6 +7,10 @@
 
 # COMMAND ----------
 
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
 import psycopg2
 from contextlib import contextmanager
 from pyspark.sql import Row, SparkSession
