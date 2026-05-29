@@ -42,8 +42,8 @@ with pg_conn() as conn:
         pg.execute("""
             SELECT a.application_id, a.user_id, a.company_id, c.name,
                    COALESCE(c.domain, ''), a.job_id, a.provider,
-                   COALESCE(a.position, ''), a.current_status,
-                   a.applied_at, a.last_updated
+                   COALESCE(a.source, ''), COALESCE(a.position, ''),
+                   a.current_status, a.applied_at, a.last_updated
             FROM applications a
             JOIN companies c ON a.company_id = c.company_id
         """)
@@ -79,6 +79,7 @@ fact_schema = StructType([
     StructField("status_id",      IntegerType()),
     StructField("job_id",         StringType()),
     StructField("provider",       StringType()),
+    StructField("source",         StringType()),
     StructField("position",       StringType()),
     StructField("applied_at",     TimestampType()),
     StructField("last_updated",   TimestampType()),
@@ -89,12 +90,13 @@ fact_rows = [
         application_id=int(r[0]),
         user_id=r[1],
         company_id=int(r[2]),
-        status_id=STATUS_ID.get(r[8], 1),
+        status_id=STATUS_ID.get(r[9], 1),
         job_id=r[5],
         provider=r[6],
-        position=r[7],
-        applied_at=r[9],
-        last_updated=r[10],
+        source=r[7],
+        position=r[8],
+        applied_at=r[10],
+        last_updated=r[11],
     )
     for r in rows
 ]
@@ -116,7 +118,7 @@ spark.sql(f"DELETE FROM {FACT_APPLICATIONS}")
 spark.sql(f"""
     INSERT INTO {FACT_APPLICATIONS}
     SELECT application_id, user_id, company_id, status_id,
-           job_id, provider, position, applied_at, last_updated
+           job_id, provider, source, position, applied_at, last_updated
     FROM _gold_fact
 """)
 

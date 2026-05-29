@@ -184,8 +184,8 @@ def rebuild_gold_for_user(user_id: str):
         pg.execute("""
             SELECT a.application_id, a.user_id, a.company_id, c.name,
                    COALESCE(c.domain, ''), a.job_id, a.provider,
-                   COALESCE(a.position, ''), a.current_status,
-                   a.applied_at, a.last_updated
+                   COALESCE(a.source, ''), COALESCE(a.position, ''),
+                   a.current_status, a.applied_at, a.last_updated
             FROM applications a
             JOIN companies c ON a.company_id = c.company_id
             WHERE a.user_id = %s
@@ -218,15 +218,15 @@ def rebuild_gold_for_user(user_id: str):
                 seen_companies.add(company_id)
 
         for row in rows:
-            app_id, uid, company_id, _, _, job_id, provider, position, status, applied_at, last_updated = row
+            app_id, uid, company_id, _, _, job_id, provider, source, position, status, applied_at, last_updated = row
             applied_str = applied_at.strftime("%Y-%m-%d %H:%M:%S") if applied_at else None
             updated_str = last_updated.strftime("%Y-%m-%d %H:%M:%S") if last_updated else None
             cursor.execute(
                 f"INSERT INTO {table('gold', 'fact_applications')} "
-                f"(application_id, user_id, company_id, status_id, job_id, provider, position, applied_at, last_updated) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"(application_id, user_id, company_id, status_id, job_id, provider, source, position, applied_at, last_updated) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [app_id, uid, company_id, STATUS_ID.get(status, 1),
-                 job_id, provider, position, applied_str, updated_str],
+                 job_id, provider, source, position, applied_str, updated_str],
             )
 
     print(f"[gold] Rebuilt for {user_id}: {len(rows)} applications")

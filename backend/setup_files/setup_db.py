@@ -59,6 +59,7 @@ TABLES = {
         status_id      INT NOT NULL,
         job_id         STRING,
         provider       STRING,
+        source         STRING,
         position       STRING,
         applied_at     TIMESTAMP,
         last_updated   TIMESTAMP
