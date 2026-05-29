@@ -5,6 +5,7 @@
 from fastapi import APIRouter, HTTPException
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from email.utils import parsedate_to_datetime
 import os
 from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
@@ -85,7 +86,10 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
             headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
             subject = headers.get("Subject", "")
             sender = headers.get("From", "")
-            received_at = headers.get("Date", "")
+            try:
+                received_at = parsedate_to_datetime(headers.get("Date", "")).astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                received_at = datetime.now(timezone.utc).replace(tzinfo=None)
             body = decode_body(msg["payload"])
             thread_id = msg.get("threadId", "")
             provider = "gmail"
@@ -114,7 +118,7 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
                     [user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at, source],
                 )
 
-            sync_to_postgres(user_id, msg_id, job_id, provider, company, status, source)
+            sync_to_postgres(user_id, msg_id, job_id, provider, company, status, source, received_at)
 
             ingested.append({
                 "id": msg_id,
@@ -138,7 +142,8 @@ STATUS_RANK = {"applied": 1, "interview": 2, "offer": 3, "rejected": 4}
 
 
 def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
-                     company: str, status: str, source: str = "Unknown"):
+                     company: str, status: str, source: str = "Unknown",
+                     received_at=None):
     with get_pg_cursor() as pg:
         # Upsert company
         pg.execute("""
@@ -158,9 +163,9 @@ def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
         if not existing:
             pg.execute("""
                 INSERT INTO applications (user_id, company_id, job_id, provider, source, current_status, applied_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING application_id
-            """, [user_id, company_id, job_id, provider, source, status])
+            """, [user_id, company_id, job_id, provider, source, status, received_at])
             application_id = pg.fetchone()[0]
             pg.execute(
                 "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",
@@ -253,39 +258,3 @@ def scan_emails(user: CurrentUser):
     return {"new": len(emails), "emails": emails}
 
 
-@router.get("/applications")
-def get_applications(user: CurrentUser):
-    user_id = user["sub"]
-
-    with get_cursor() as cursor:
-        cursor.execute(
-            f"""
-            SELECT company, status, email_count, first_contact, last_update
-            FROM (
-                SELECT
-                    company,
-                    status,
-                    COUNT(*) OVER (PARTITION BY company)       AS email_count,
-                    MIN(parsed_at) OVER (PARTITION BY company) AS first_contact,
-                    MAX(parsed_at) OVER (PARTITION BY company) AS last_update,
-                    ROW_NUMBER() OVER (PARTITION BY company ORDER BY parsed_at DESC) AS rn
-                FROM {table('silver', 'applications')}
-                WHERE user_id = ?
-            )
-            WHERE rn = 1
-            ORDER BY last_update DESC
-            """,
-            [user_id],
-        )
-        rows = cursor.fetchall()
-
-    return [
-        {
-            "company": r[0],
-            "status": r[1],
-            "email_count": r[2],
-            "first_contact": str(r[3]),
-            "last_update": str(r[4]),
-        }
-        for r in rows
-    ]

@@ -44,7 +44,7 @@ def pg_conn():
 
 # Load all Silver rows
 silver_rows = spark.sql(f"""
-    SELECT user_id, message_id, job_id, provider, company, status
+    SELECT user_id, message_id, job_id, provider, company, status, source, received_at
     FROM {SILVER_TABLE}
 """).collect()
 
@@ -65,12 +65,14 @@ else:
     with pg_conn() as conn:
         with conn.cursor() as pg:
             for row in new_rows:
-                user_id  = row.user_id
-                msg_id   = row.message_id
-                job_id   = row.job_id
-                provider = row.provider
-                company  = row.company
-                status   = row.status
+                user_id     = row.user_id
+                msg_id      = row.message_id
+                job_id      = row.job_id
+                provider    = row.provider
+                company     = row.company
+                status      = row.status
+                source      = row.source
+                received_at = row.received_at
 
                 # Upsert company
                 pg.execute("""
@@ -90,10 +92,10 @@ else:
                 if not existing:
                     pg.execute("""
                         INSERT INTO applications
-                            (user_id, company_id, job_id, provider, current_status, applied_at)
-                        VALUES (%s, %s, %s, %s, %s, NOW())
+                            (user_id, company_id, job_id, provider, source, current_status, applied_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         RETURNING application_id
-                    """, [user_id, company_id, job_id, provider, status])
+                    """, [user_id, company_id, job_id, provider, source, status, received_at])
                     application_id = pg.fetchone()[0]
                     pg.execute(
                         "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",

@@ -137,19 +137,15 @@ def google_auth(body: GoogleAuthRequest, background_tasks: BackgroundTasks):
 
 @router.get("/me")
 def get_me(authorization: str = Header(...)):
+    # The JWT already contains the user's profile — no Databricks query needed.
+    # The signature is validated by decode_jwt, so the payload can be trusted directly.
     payload = decode_jwt(authorization)
-
-    with get_cursor() as cursor:
-        cursor.execute(
-            f"SELECT user_id, email, name, picture FROM {table('system', 'users')} WHERE user_id = ?",
-            [payload["sub"]],
-        )
-        row = cursor.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    return {"id": row[0], "email": row[1], "name": row[2], "picture": row[3]}
+    return {
+        "id":      payload["sub"],
+        "email":   payload["email"],
+        "name":    payload["name"],
+        "picture": payload["picture"],
+    }
 
 
 @router.post("/logout")

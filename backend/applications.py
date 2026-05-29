@@ -30,6 +30,17 @@ def _owns_application(cursor, application_id: int, user_id: str):
         raise HTTPException(status_code=404, detail="Application not found")
 
 
+@router.delete("/{application_id}")
+def delete_application(application_id: int, user: CurrentUser):
+    user_id = user["sub"]
+    with get_pg_cursor() as cursor:
+        _owns_application(cursor, application_id, user_id)
+        cursor.execute("DELETE FROM notes WHERE application_id = %s", [application_id])
+        cursor.execute("DELETE FROM status_events WHERE application_id = %s", [application_id])
+        cursor.execute("DELETE FROM applications WHERE application_id = %s", [application_id])
+    return {"ok": True}
+
+
 @router.get("")
 def list_applications(user: CurrentUser):
     user_id = user["sub"]
@@ -37,11 +48,12 @@ def list_applications(user: CurrentUser):
         cursor.execute("""
             SELECT
                 a.application_id, c.name AS company, a.position,
-                a.current_status, a.applied_at, a.last_updated, a.job_id, a.provider
+                a.current_status, a.source, a.applied_at, a.last_updated,
+                a.job_id, a.provider
             FROM applications a
             JOIN companies c ON a.company_id = c.company_id
             WHERE a.user_id = %s
-            ORDER BY a.last_updated DESC
+            ORDER BY a.applied_at DESC NULLS LAST
         """, [user_id])
         cols = [d[0] for d in cursor.description]
         return [dict(zip(cols, r)) for r in cursor.fetchall()]
