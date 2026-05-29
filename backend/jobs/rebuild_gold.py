@@ -1,7 +1,8 @@
+# Databricks notebook source
 # Databricks pipeline notebook: Postgres → Gold
 # Reads the current normalized state from Postgres and does a full rebuild of the Gold
 # star schema (dim_companies and fact_applications) in Databricks Delta.
-# Databricks notebook source
+
 # MAGIC %pip install psycopg2-binary>=2.9.0
 
 # COMMAND ----------

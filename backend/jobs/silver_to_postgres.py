@@ -1,7 +1,9 @@
+# Databricks notebook source
+
 # Databricks pipeline notebook: Silver → Postgres
 # Finds Silver rows that have not yet been synced to Postgres by checking against
 # source_email_id in status_events, then upserts companies, applications, and status events.
-# Databricks notebook source
+
 # MAGIC %pip install psycopg2-binary>=2.9.0
 
 # COMMAND ----------
