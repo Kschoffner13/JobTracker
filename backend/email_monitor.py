@@ -102,7 +102,7 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
 
             # Silver — classified
             status = detect_status(subject, body)
-            company = extract_company(sender)
+            company = extract_company(sender, subject)
             position = extract_position(subject, body)
 
             with get_cursor() as cursor:

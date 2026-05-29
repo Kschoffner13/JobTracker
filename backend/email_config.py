@@ -2,17 +2,12 @@
 # Shared email scanning configuration used by both the FastAPI backend (email_monitor.py)
 # and the Databricks pipeline notebooks (email_sync.py, bronze_to_silver.py).
 # Change JOB_QUERY or classification logic here and both pipelines pick it up automatically.
-# Set USE_AI_CLASSIFICATION=true in .env to use Claude Haiku instead of regex patterns.
 
 # COMMAND ----------
 
 import base64
 import hashlib
-import json
-import os
 import re
-
-USE_AI_CLASSIFICATION = os.getenv("USE_AI_CLASSIFICATION", "false").lower() == "true"
 
 # COMMAND ----------
 
@@ -75,113 +70,7 @@ _POSITION_PATTERNS = [
 ]
 
 
-_POSITION_NOISE = re.compile(
-    r"^(?:was sent to|is sent to|applying to|applied to|your application to|"
-    r"application to|applying for the|applying for|applying\s+\w+\s*$|"
-    r"to\s+(?:the\s+)?(?=\w)|our\s+|received by|track it here|"
-    r"\(?junior\s+data\s+engineer\s+position\)?$)",
-    re.IGNORECASE,
-)
-_POSITION_TRAILING = re.compile(
-    r"\s*(?:application|is complete|position[!.]?|!|\.|,\s*koen!?)$",
-    re.IGNORECASE,
-)
-_POSITION_GENERIC = {
-    "your application", "your application!", "applying to work",
-    "applying", "track it here", "none",
-}
-_POSITION_ID_PREFIX = re.compile(r"^\d+\w+\s+")
-
-
-def _clean_position(pos: str | None) -> str | None:
-    """Strip noise patterns the AI commonly returns instead of null."""
-    if not pos or not isinstance(pos, str):
-        return None
-    pos = pos.strip().strip('"')
-    if pos.lower() in _POSITION_GENERIC:
-        return None
-    if _POSITION_NOISE.match(pos):
-        # try to salvage by stripping the bad prefix
-        cleaned = _POSITION_NOISE.sub("", pos).strip()
-        pos = cleaned if len(cleaned) > 3 else None
-    if pos:
-        pos = _POSITION_TRAILING.sub("", pos).strip()
-        pos = _POSITION_ID_PREFIX.sub("", pos).strip()
-    if not pos or len(pos) < 4:
-        return None
-    return pos
-
-
-def _classify_with_ai(subject: str, body: str) -> dict | None:
-    """Call Claude Haiku to classify status and extract position in one API call.
-    Returns {"status": str, "position": str | None} or None on any failure.
-    Disable by setting USE_AI_CLASSIFICATION=false in .env.
-    """
-    try:
-        import anthropic
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=150,
-            system=(
-                "You help a job seeker track their job applications.\n\n"
-                "Given an email, return a JSON object with:\n"
-                '  "status": one of applied / interview / offer / rejected / not_applicable\n'
-                '  "position": the exact job title (e.g. "Software Engineer"), or null\n\n'
-                "STATUS rules:\n"
-                "  applied        — application submitted or received\n"
-                "  interview      — interview invited, scheduled, reminder, or calendar invite\n"
-                "  offer          — job offer extended\n"
-                "  rejected       — application declined\n"
-                "  not_applicable — promotions, newsletters, bank offers, research studies, unrelated\n\n"
-                "POSITION rules — return the job title ONLY. Return null when:\n"
-                "  - The subject only names a company with no role (e.g. 'sent to Synechron', 'applying to MongoDB')\n"
-                "  - No specific role title is mentioned\n"
-                "  - The email is not a job application\n"
-                "Strip prefixes like 'our', 'the', job ID numbers. Strip suffixes like 'Application', 'is complete'.\n\n"
-                "Examples (any industry):\n"
-                '  "Your application was sent to Acme Corp" → {"status":"applied","position":null}\n'
-                '  "Thank you for applying to Acme Corp" → {"status":"applied","position":null}\n'
-                '  "We received your application for Marketing Manager at Acme" → {"status":"applied","position":"Marketing Manager"}\n'
-                '  "Your application to Data Analyst at Acme Corp" → {"status":"applied","position":"Data Analyst"}\n'
-                '  "Thank you for applying! - Junior Sales Representative, West Region" → {"status":"applied","position":"Junior Sales Representative"}\n'
-                '  "Next Steps for Product Manager Application" → {"status":"applied","position":"Product Manager"}\n'
-                '  "Update on your application for UX Designer, Entry Level" → {"status":"applied","position":"UX Designer, Entry Level"}\n'
-                '  "We regret to inform you - Finance Analyst role" → {"status":"rejected","position":"Finance Analyst"}\n'
-                '  "Interview Reminder with Acme Corp" → {"status":"interview","position":null}\n'
-                '  "Upcoming Interview Starting Soon" → {"status":"interview","position":null}\n'
-                '  "Invitation: Interview for Operations Manager role" → {"status":"interview","position":"Operations Manager"}\n'
-                '  "Congratulations! We would like to offer you the Project Manager position" → {"status":"offer","position":"Project Manager"}\n'
-                '  "Special offer: 50% off your next purchase" → {"status":"not_applicable","position":null}\n'
-                '  "Limited Time Offer: Special Rates" → {"status":"not_applicable","position":null}\n'
-                "Respond with only the JSON object."
-            ),
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Subject: {subject or ''}\n"
-                    f"Body: {(body or '')[:800]}"
-                ),
-            }],
-        )
-        data = json.loads(response.content[0].text.strip())
-        status = data.get("status", "applied")
-        if status not in {"applied", "interview", "offer", "rejected", "not_applicable"}:
-            status = "applied"
-        position = _clean_position(data.get("position"))
-        return {"status": status, "position": position}
-    except Exception:
-        return None
-
-
 def extract_position(subject: str, body: str) -> str | None:
-    if USE_AI_CLASSIFICATION:
-        result = _classify_with_ai(subject, body)
-        # not_applicable means no real job title to extract
-        if result and result["status"] != "not_applicable":
-            return result["position"]
-        if result and result["status"] == "not_applicable":
-            return None
     for text in [(subject or ""), (body or "")[:500]]:
         for pattern in _POSITION_PATTERNS:
             match = re.search(pattern, text.strip(), re.IGNORECASE)
@@ -194,11 +83,6 @@ def extract_position(subject: str, body: str) -> str | None:
 
 
 def detect_status(subject: str, body: str) -> str:
-    if USE_AI_CLASSIFICATION:
-        result = _classify_with_ai(subject, body)
-        if result and result["status"] != "not_applicable":
-            return result["status"]
-        # not_applicable: fall through to regex as a second opinion
     text = f"{subject or ''} {body or ''}".lower()
     for pattern, status in STATUS_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
@@ -206,14 +90,127 @@ def detect_status(subject: str, body: str) -> str:
     return "applied"
 
 
-def extract_company(sender: str) -> str:
-    match = re.search(r"@([\w.-]+)", sender or "")
-    if not match:
-        return "Unknown"
-    domain = match.group(1)
-    personal_domains = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
+_PERSONAL_DOMAINS = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
+
+# Platforms where the sender domain is the ATS, not the actual employer
+_ATS_DOMAINS = {
+    "greenhouse-mail.io", "hire.lever.co", "lever.co", "ashbyhq.com",
+    "bamboohr.com", "myworkday.com", "dayforce.com",
+    "talent.icims.com", "icims.com", "breezy-mail.com",
+    "teamtailor-mail.com", "gem.com", "hire.humi.ca",
+    "adp.com", "successfactors.com", "smartrecruiters.com",
+    "applytojob.com", "ziprecruiter.com", "newtonsoftware.com",
+    "lattice.com", "workable.com", "jobvite.com", "recruitee.com",
+    "ultipro.com", "ultipro.innovationcu.ca",
+}
+
+# Trailing words that are part of the ATS sender name, not the company
+_HIRING_NOISE = re.compile(
+    r"\s+(?:hiring\s+team|careers?|hr|hires?|recruiting|talent(?:\s+acquisition)?|jobs?|notifications?)\s*$",
+    re.IGNORECASE,
+)
+
+# LinkedIn-specific subject patterns
+_LINKEDIN_SUBJECT_PATTERNS = [
+    r"application was sent to (.+?)(?:\.|,|$)",
+    r"application to .+? at (.+?)(?:\.|,|$)",
+    r"view (.+?) jobs and your next steps",
+    r"application was viewed by (.+?)(?:\.|,|$)",
+    r"complete your application to (.+?)(?:[–—,.]|$)",
+]
+
+# Generic subject patterns to extract company name from ATS emails
+_SUBJECT_COMPANY_PATTERNS = [
+    # "at Company" at end: "received your application for Role at Company"
+    r"\bat\s+(.+?)\s*[!.,]?\s*$",
+    # "applying to/at/with Company" at end
+    r"\bapplying\s+(?:to|at|with)\s+(.+?)\s*[!.,]?\s*$",
+    # "application to/at Company" at end
+    r"\bapplication\s+(?:to|at|with)\s+(.+?)\s*[!.,]?\s*$",
+    # "with Company" at end: "Thank you for applying with Company"
+    r"\bwith\s+(.+?)\s*[!.,]?\s*$",
+    # "Company | Thank you..." or "Company — ..." at start
+    r"^(.+?)\s+[|]\s+(?:thank you|your application|application|we)",
+    # "Company - Thank you..." at start
+    r"^(.+?)\s+[-–—]\s+thank you",
+]
+
+
+def _parse_display_name(sender: str) -> str:
+    """Extract the display name from 'Company Name <email@domain.com>' format."""
+    m = re.match(r'^"?([^"<]+?)"?\s*<', sender or "")
+    return m.group(1).strip() if m else ""
+
+
+def _clean_display_name(name: str) -> str | None:
+    """Strip ATS noise from display names and handle 'Person - Company' formats."""
+    name = _HIRING_NOISE.sub("", name).strip()
+    if not name:
+        return None
+    # "Person Name - Company" → take "Company" only when exactly 2 words precede the dash
+    # (heuristic: 2-word names are likely people; 3+ words are likely company names)
+    if " - " in name:
+        before, _, after = name.partition(" - ")
+        if len(before.split()) <= 2:
+            name = after.strip()
+    return name if len(name) > 1 else None
+
+
+def _company_from_subject(subject: str) -> str | None:
+    """Try to extract company name from common ATS subject line patterns."""
+    for pattern in _SUBJECT_COMPANY_PATTERNS:
+        m = re.search(pattern, subject, re.IGNORECASE)
+        if m:
+            company = m.group(1).strip().rstrip("!.,;–— ")
+            if len(company) > 1:
+                return company
+    return None
+
+
+def extract_company(sender: str, subject: str = "") -> str:
+    domain_match = re.search(r"@([\w.-]+)", sender or "")
+    domain = domain_match.group(1).lower() if domain_match else ""
     parts = domain.split(".")
-    company_part = parts[-2] if len(parts) >= 2 else parts[0]
-    if company_part in personal_domains:
+    base = parts[-2] if len(parts) >= 2 else parts[0]
+
+    # LinkedIn: parse the actual company from the subject line
+    if "linkedin.com" in domain:
+        if subject:
+            for pattern in _LINKEDIN_SUBJECT_PATTERNS:
+                m = re.search(pattern, subject, re.IGNORECASE)
+                if m:
+                    company = m.group(1).strip().rstrip(".,;")
+                    if company:
+                        return company
+        return "LinkedIn"
+
+    # Known ATS platforms: real company is NOT the sender domain
+    if any(ats in domain for ats in _ATS_DOMAINS):
+        # 1. Try subject line patterns first (most specific)
+        if subject:
+            company = _company_from_subject(subject)
+            if company:
+                return company
+        # 2. Try sender display name
+        display = _parse_display_name(sender)
+        if display:
+            company = _clean_display_name(display)
+            if company:
+                return company
+        # 3. Try email address local part (e.g. autodesk@myworkday.com → Autodesk)
+        if domain_match:
+            local = sender.split("@")[0].split("<")[-1].strip()
+            local = local.split("+")[0]
+            local = re.sub(r"\.(hr|jobs?|careers?|hiring)$", "", local, flags=re.IGNORECASE)
+            noise = {"noreply", "no-reply", "system", "notify", "notification",
+                     "autoreply", "donotreply", "candidate", "reply", "autofill"}
+            if local and local.lower() not in noise:
+                return local.capitalize()
         return "Unknown"
-    return company_part.capitalize()
+
+    # Personal email domains
+    if base in _PERSONAL_DOMAINS:
+        return "Unknown"
+
+    # Company-owned domain — use the domain name
+    return base.capitalize()
