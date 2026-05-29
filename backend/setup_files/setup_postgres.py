@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS applications (
     company_id     INT REFERENCES companies(company_id),
     job_id         VARCHAR UNIQUE,
     provider       VARCHAR DEFAULT 'gmail',
+    source         VARCHAR,
     position       VARCHAR,
     current_status VARCHAR DEFAULT 'applied',
     applied_at     TIMESTAMP,

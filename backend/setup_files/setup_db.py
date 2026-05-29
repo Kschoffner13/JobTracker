@@ -25,7 +25,7 @@ TABLES = {
         subject     STRING,
         sender      STRING,
         received_at TIMESTAMP,
-        body_raw    STRING,
+        body_ raw    STRING,
         ingested_at TIMESTAMP
     """,
     ("silver", "applications"): """
@@ -39,7 +39,8 @@ TABLES = {
         email_subject STRING,
         sender        STRING,
         received_at   TIMESTAMP,
-        parsed_at     TIMESTAMP
+        parsed_at     TIMESTAMP,
+        source        STRING
     """,
     ("gold", "dim_status"): """
         status_id   INT NOT NULL,

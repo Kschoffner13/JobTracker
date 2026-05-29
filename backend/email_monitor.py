@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
 from postgres import get_pg_cursor
-from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position
+from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position, detect_source
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
@@ -101,19 +101,20 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None) ->
                 )
 
             # Silver — classified
-            status = detect_status(subject, body)
-            company = extract_company(sender, subject)
+            status   = detect_status(subject, body)
+            company  = extract_company(sender, subject)
             position = extract_position(subject, body)
+            source   = detect_source(sender)
 
             with get_cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO {table('silver', 'applications')} "
-                    f"(user_id, message_id, job_id, provider, company, position, status, email_subject, sender, received_at, parsed_at) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp())",
-                    [user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at],
+                    f"(user_id, message_id, job_id, provider, company, position, status, email_subject, sender, received_at, parsed_at, source) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(), ?)",
+                    [user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at, source],
                 )
 
-            sync_to_postgres(user_id, msg_id, job_id, provider, company, status)
+            sync_to_postgres(user_id, msg_id, job_id, provider, company, status, source)
 
             ingested.append({
                 "id": msg_id,
@@ -137,7 +138,7 @@ STATUS_RANK = {"applied": 1, "interview": 2, "offer": 3, "rejected": 4}
 
 
 def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
-                     company: str, status: str):
+                     company: str, status: str, source: str = "Unknown"):
     with get_pg_cursor() as pg:
         # Upsert company
         pg.execute("""
@@ -156,10 +157,10 @@ def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
 
         if not existing:
             pg.execute("""
-                INSERT INTO applications (user_id, company_id, job_id, provider, current_status, applied_at)
-                VALUES (%s, %s, %s, %s, %s, NOW())
+                INSERT INTO applications (user_id, company_id, job_id, provider, source, current_status, applied_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
                 RETURNING application_id
-            """, [user_id, company_id, job_id, provider, status])
+            """, [user_id, company_id, job_id, provider, source, status])
             application_id = pg.fetchone()[0]
             pg.execute(
                 "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",

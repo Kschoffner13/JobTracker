@@ -46,12 +46,13 @@ else:
         status   = detect_status(row.subject, row.body_raw)
         company  = extract_company(row.sender, row.subject)
         position = extract_position(row.subject, row.body_raw)
+        source   = detect_source(row.sender)
         classified.append((
             row.user_id, row.message_id, row.job_id, row.provider,
             company, position, status, row.subject,
-            row.sender, row.received_at, parsed_at,
+            row.sender, row.received_at, parsed_at, source,
         ))
-        print(f"  {row.sender} | {row.subject} → {status} | {position}")
+        print(f"  {row.sender} | {row.subject} → {status} | {source} | {position}")
 
     silver_schema = StructType([
         StructField("user_id",       StringType()),
@@ -65,6 +66,7 @@ else:
         StructField("sender",        StringType()),
         StructField("received_at",   TimestampType()),
         StructField("parsed_at",     TimestampType()),
+        StructField("source",        StringType()),
     ])
 
     silver_df = spark.createDataFrame(classified, silver_schema)
@@ -73,7 +75,7 @@ else:
     spark.sql(f"""
         INSERT INTO {SILVER_TABLE}
         SELECT user_id, message_id, job_id, provider, company, position,
-               status, email_subject, sender, received_at, parsed_at
+               status, email_subject, sender, received_at, parsed_at, source
         FROM _silver_batch
     """)
 

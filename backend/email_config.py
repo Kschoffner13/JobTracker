@@ -92,6 +92,38 @@ def detect_status(subject: str, body: str) -> str:
 
 _PERSONAL_DOMAINS = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "googlemail"}
 
+# Maps sender email domain → human-readable application source
+_DOMAIN_SOURCE_MAP = {
+    "linkedin.com":           "LinkedIn",
+    "greenhouse-mail.io":     "Greenhouse",
+    "hire.lever.co":          "Lever",
+    "lever.co":               "Lever",
+    "ashbyhq.com":            "Ashby",
+    "bamboohr.com":           "BambooHR",
+    "myworkday.com":          "Workday",
+    "dayforce.com":           "Dayforce",
+    "talent.icims.com":       "iCIMS",
+    "icims.com":              "iCIMS",
+    "breezy-mail.com":        "Breezy",
+    "teamtailor-mail.com":    "Teamtailor",
+    "gem.com":                "Gem",
+    "hire.humi.ca":           "Humi",
+    "adp.com":                "ADP",
+    "successfactors.com":     "SAP SuccessFactors",
+    "smartrecruiters.com":    "SmartRecruiters",
+    "applytojob.com":         "ApplyToJob",
+    "ziprecruiter.com":       "ZipRecruiter",
+    "newtonsoftware.com":     "Newton Software",
+    "lattice.com":            "Lattice",
+    "jobvite.com":            "Jobvite",
+    "recruitee.com":          "Recruitee",
+    "workable.com":           "Workable",
+    "jobright.ai":            "Jobright",
+    "micro1.ai":              "Micro1",
+    "userinterviews.com":     "User Interviews",
+    "ultipro.com":            "UKG Pro",
+}
+
 # Platforms where the sender domain is the ATS, not the actual employer
 _ATS_DOMAINS = {
     "greenhouse-mail.io", "hire.lever.co", "lever.co", "ashbyhq.com",
@@ -109,6 +141,22 @@ _HIRING_NOISE = re.compile(
     r"\s+(?:hiring\s+team|careers?|hr|hires?|recruiting|talent(?:\s+acquisition)?|jobs?|notifications?)\s*$",
     re.IGNORECASE,
 )
+
+def detect_source(sender: str) -> str:
+    """Return the platform where the application was submitted based on the sender domain."""
+    domain_match = re.search(r"@([\w.-]+)", sender or "")
+    if not domain_match:
+        return "Unknown"
+    domain = domain_match.group(1).lower()
+    for ats_domain, source in _DOMAIN_SOURCE_MAP.items():
+        if ats_domain in domain:
+            return source
+    parts = domain.split(".")
+    base = parts[-2] if len(parts) >= 2 else parts[0]
+    if base in _PERSONAL_DOMAINS:
+        return "Unknown"
+    return "Company Website"
+
 
 # LinkedIn-specific subject patterns
 _LINKEDIN_SUBJECT_PATTERNS = [
