@@ -164,14 +164,26 @@ export function Dashboard() {
 
   const handleScan = async () => {
     if (!token) return
-    setScanning(true); setError(null); setNewCount(null)
+    setScanning(true)
+    setError(null)
+    setNewCount(null)
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000) // 5 min max
+
     try {
-      const result = await scanEmails(token)
+      const result = await scanEmails(token, controller.signal)
+      clearTimeout(timeout)
+      setScanning(false)
       setNewCount(result.emails.length)
       await loadApplications(true)
       if (tab === 'analytics') await loadAnalytics()
-    } catch { setError('Scan failed. Please try again.') }
-    finally { setScanning(false) }
+    } catch (err) {
+      clearTimeout(timeout)
+      setScanning(false)
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      setError(isTimeout ? 'Scan timed out — the Databricks warehouse may be waking up. Try again in a minute.' : 'Scan failed. Please try again.')
+    }
   }
 
   const uniqueSources = Array.from(new Set(applications.map(a => a.source).filter(Boolean))).sort() as string[]

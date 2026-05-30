@@ -31,15 +31,20 @@ def build_gmail_service(refresh_token: str):
 
 
 def get_watermark(user_id: str) -> str | None:
-    """Return the date of the last ingested email as a Gmail date string YYYY/MM/DD."""
+    """Return the Gmail after: date string for the next scan.
+    Uses MAX(received_at) from Bronze (the actual email date) minus 1 day,
+    because Gmail's after: filter is exclusive so subtracting 1 day ensures
+    we include emails from the same day as the last ingested email.
+    """
     with get_cursor() as cursor:
         cursor.execute(
-            f"SELECT MAX(ingested_at) FROM {table('bronze', 'emails')} WHERE user_id = ?",
+            f"SELECT MAX(received_at) FROM {table('bronze', 'emails')} WHERE user_id = ?",
             [user_id],
         )
         row = cursor.fetchone()
     if row and row[0]:
-        return row[0].strftime("%Y/%m/%d")
+        watermark = (row[0] - timedelta(days=1)).strftime("%Y/%m/%d")
+        return watermark
     return None
 
 
@@ -253,7 +258,10 @@ def scan_emails(user: CurrentUser):
 
     after_date = get_watermark(user_id)
     emails = run_scan(user_id, row[0], after_date)
-    rebuild_gold_for_user(user_id)
+    try:
+        rebuild_gold_for_user(user_id)
+    except Exception as e:
+        print(f"[gold] Rebuild failed (non-fatal): {e}")
 
     return {"new": len(emails), "emails": emails}
 

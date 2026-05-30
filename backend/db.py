@@ -25,6 +25,7 @@ def get_cursor():
         server_hostname=os.getenv("DATABRICKS_HOST"),
         http_path=os.getenv("DATABRICKS_HTTP_PATH"),
         access_token=os.getenv("DATABRICKS_TOKEN"),
+        _socket_timeout=30,
     )
     cursor = conn.cursor()
     try:

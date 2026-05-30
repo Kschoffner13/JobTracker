@@ -14,10 +14,11 @@ export interface ScanResult {
   emails: Email[]
 }
 
-export async function scanEmails(token: string): Promise<ScanResult> {
+export async function scanEmails(token: string, signal?: AbortSignal): Promise<ScanResult> {
   const res = await fetch(`${BASE_URL}/api/emails/scan`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
+    signal,
   })
   if (!res.ok) throw new Error('Scan failed')
   return res.json()
