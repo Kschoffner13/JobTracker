@@ -44,7 +44,7 @@ else:
 
     for row in rows:
         status   = detect_status(row.subject, row.body_raw)
-        company  = extract_company(row.sender, row.subject)
+        company  = extract_company(row.sender, row.subject, row.body_raw or "")
         position = extract_position(row.subject, row.body_raw)
         source   = detect_source(row.sender)
         classified.append((

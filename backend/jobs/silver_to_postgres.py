@@ -72,6 +72,7 @@ else:
                 company     = row.company
                 status      = row.status
                 source      = row.source
+                position    = row.position
                 received_at = row.received_at
 
                 # Upsert company
@@ -92,10 +93,10 @@ else:
                 if not existing:
                     pg.execute("""
                         INSERT INTO applications
-                            (user_id, company_id, job_id, provider, source, current_status, applied_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            (user_id, company_id, job_id, provider, source, position, current_status, applied_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING application_id
-                    """, [user_id, company_id, job_id, provider, source, status, received_at])
+                    """, [user_id, company_id, job_id, provider, source, position, status, received_at])
                     application_id = pg.fetchone()[0]
                     pg.execute(
                         "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",

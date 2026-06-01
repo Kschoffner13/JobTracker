@@ -97,6 +97,15 @@ def scan_user(user_id: str, refresh_token: str):
             ).execute()
 
             headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+            subject = headers.get("Subject", "")
+            sender  = headers.get("From", "")
+            body    = decode_body(msg["payload"])
+
+            # Skip promotional/ad emails from known platforms
+            if not is_application_email(sender, subject, body):
+                print(f"  [skip] Non-application email from {sender}: {subject}")
+                continue
+
             thread_id = msg.get("threadId", "")
             provider = "gmail"
             bronze_rows.append((
