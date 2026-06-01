@@ -11,10 +11,15 @@ router = APIRouter(prefix="/api/applications", tags=["applications"])
 VALID_STATUSES = {"applied", "interview", "offer", "rejected"}
 
 
+VALID_JOB_TYPES = {"Remote", "Hybrid", "On-site"}
+
+
 class ApplicationUpdate(BaseModel):
     company_name: str | None = None
     position: str | None = None
     current_status: str | None = None
+    job_type: str | None = None
+    job_url: str | None = None
 
 
 class NoteCreate(BaseModel):
@@ -48,8 +53,8 @@ def list_applications(user: CurrentUser):
         cursor.execute("""
             SELECT
                 a.application_id, c.name AS company, a.position,
-                a.current_status, a.source, a.applied_at, a.last_updated,
-                a.job_id, a.provider
+                a.current_status, a.source, a.job_type, a.job_url,
+                a.applied_at, a.last_updated, a.job_id, a.provider
             FROM applications a
             JOIN companies c ON a.company_id = c.company_id
             WHERE a.user_id = %s
@@ -95,6 +100,20 @@ def update_application(application_id: int, body: ApplicationUpdate, user: Curre
             cursor.execute(
                 "INSERT INTO status_events (application_id, status) VALUES (%s, %s)",
                 [application_id, body.current_status],
+            )
+
+        if body.job_type is not None:
+            if body.job_type and body.job_type not in VALID_JOB_TYPES:
+                raise HTTPException(status_code=400, detail=f"Invalid job type. Must be one of: {VALID_JOB_TYPES}")
+            cursor.execute(
+                "UPDATE applications SET job_type = %s, last_updated = NOW() WHERE application_id = %s",
+                [body.job_type or None, application_id],
+            )
+
+        if body.job_url is not None:
+            cursor.execute(
+                "UPDATE applications SET job_url = %s, last_updated = NOW() WHERE application_id = %s",
+                [body.job_url or None, application_id],
             )
 
     return {"ok": True}

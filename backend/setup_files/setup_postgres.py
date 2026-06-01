@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS applications (
     provider       VARCHAR DEFAULT 'gmail',
     source         VARCHAR,
     position       VARCHAR,
+    job_type       VARCHAR,
+    job_url        VARCHAR,
     current_status VARCHAR DEFAULT 'applied',
     applied_at     TIMESTAMP,
     last_updated   TIMESTAMP DEFAULT NOW()

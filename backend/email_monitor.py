@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
 from postgres import get_pg_cursor
-from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position, detect_source, is_application_email
+from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position, detect_source, is_application_email, extract_job_url
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
@@ -106,11 +106,12 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None):
             company  = extract_company(sender, subject, body)
             position = extract_position(subject, body)
             source   = detect_source(sender)
+            job_url  = extract_job_url(sender, body)
 
             bronze_batch.append([user_id, msg_id, thread_id, job_id, provider, subject, sender, received_at, body])
             silver_batch.append([user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at, source])
 
-            sync_to_postgres(user_id, msg_id, job_id, provider, company, status, source, received_at, position)
+            sync_to_postgres(user_id, msg_id, job_id, provider, company, status, source, received_at, position, job_url)
             synced_postgres.add(msg_id)
 
             ingested.append({"id": msg_id, "subject": subject, "from": sender,
@@ -167,7 +168,8 @@ STATUS_RANK = {"applied": 1, "interview": 2, "offer": 3, "rejected": 4}
 
 def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
                      company: str, status: str, source: str = "Unknown",
-                     received_at=None, position: str | None = None):
+                     received_at=None, position: str | None = None,
+                     job_url: str | None = None):
     with get_pg_cursor() as pg:
         # Upsert company
         pg.execute("""
@@ -186,10 +188,10 @@ def sync_to_postgres(user_id: str, msg_id: str, job_id: str, provider: str,
 
         if not existing:
             pg.execute("""
-                INSERT INTO applications (user_id, company_id, job_id, provider, source, position, current_status, applied_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO applications (user_id, company_id, job_id, provider, source, position, job_url, current_status, applied_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING application_id
-            """, [user_id, company_id, job_id, provider, source, position, status, received_at])
+            """, [user_id, company_id, job_id, provider, source, position, job_url, status, received_at])
             application_id = pg.fetchone()[0]
             pg.execute(
                 "INSERT INTO status_events (application_id, status, source_email_id) VALUES (%s, %s, %s)",

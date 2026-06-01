@@ -1,12 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { signOut } from "../api/auth";
 import { scanEmails } from "../api/emails";
 import {
   getApplications,
   getAnalytics,
+  getNotes,
   type Application,
   type AnalyticsSummary,
+  type Note,
 } from "../api/applications";
 import { EditModal } from "./EditModal";
 
@@ -326,6 +328,18 @@ export function Dashboard() {
     () => localStorage.getItem("darkMode") === "true",
   );
   const [editingApp, setEditingApp] = useState<Application | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [notesCache, setNotesCache] = useState<Record<number, Note[]>>({});
+
+  const toggleExpand = (id: number) => {
+    const isExpanding = !expandedIds.has(id)
+    setExpandedIds(prev => { const next = new Set(prev); isExpanding ? next.add(id) : next.delete(id); return next })
+    if (isExpanding && notesCache[id] === undefined && token) {
+      getNotes(token, id)
+        .then(notes => setNotesCache(prev => ({ ...prev, [id]: notes })))
+        .catch(() => setNotesCache(prev => ({ ...prev, [id]: [] })))
+    }
+  }
   const [filterStatus, setFilterStatus] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterFrom, setFilterFrom] = useState("");
@@ -752,10 +766,11 @@ export function Dashboard() {
                 }}
               >
                 <colgroup>
-                  <col style={{ width: "20%" }} />
-                  <col style={{ width: "24%" }} />
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "19%" }} />
+                  <col style={{ width: "22%" }} />
                   <col style={{ width: "11%" }} />
-                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "15%" }} />
                   <col style={{ width: "11%" }} />
                   <col style={{ width: "8%" }} />
                 </colgroup>
@@ -767,15 +782,16 @@ export function Dashboard() {
                     }}
                   >
                     {[
+                      "",
                       "Company",
                       "Position",
                       "Status",
                       "Source",
                       "Applied",
                       "",
-                    ].map((h) => (
+                    ].map((h, i) => (
                       <th
-                        key={h}
+                        key={i}
                         style={{
                           padding: "12px 16px",
                           textAlign: "center",
@@ -796,112 +812,90 @@ export function Dashboard() {
                 </thead>
                 <tbody>
                   {loading || refreshing ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        style={{
-                          padding: 40,
-                          textAlign: "center",
-                          color: t.textFaint,
-                        }}
-                      >
-                        {refreshing ? "Refreshing..." : "Loading..."}
-                      </td>
-                    </tr>
+                    <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: t.textFaint }}>{refreshing ? "Refreshing..." : "Loading..."}</td></tr>
                   ) : filtered.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        style={{
-                          padding: 40,
-                          textAlign: "center",
-                          color: t.textFaint,
-                        }}
-                      >
-                        {applications.length === 0
-                          ? "No applications yet — click Scan Emails to get started."
-                          : "No applications match the current filters."}
-                      </td>
-                    </tr>
-                  ) : (
-                    filtered.map((app) => (
-                      <tr
-                        key={app.application_id}
-                        style={{ borderBottom: `1px solid ${t.rowBorder}` }}
-                      >
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            fontWeight: 600,
-                            color: t.text,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
+                    <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: t.textFaint }}>{applications.length === 0 ? "No applications yet — click Scan Emails to get started." : "No applications match the current filters."}</td></tr>
+                  ) : filtered.map((app) => {
+                    const expanded = expandedIds.has(app.application_id)
+                    const hasDetails = app.job_type || app.job_url
+                    return (
+                      <Fragment key={app.application_id}>
+                        {/* Main row */}
+                        <tr
+                          onClick={() => toggleExpand(app.application_id)}
+                          style={{ borderBottom: expanded ? "none" : `1px solid ${t.rowBorder}`, cursor: "pointer" }}
                         >
-                          {app.company}
-                        </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: t.textMuted,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {app.position ?? (
-                            <span style={{ color: t.textFaint }}>—</span>
-                          )}
-                        </td>
-                        <td
-                          style={{ padding: "12px 16px", textAlign: "center" }}
-                        >
-                          <StatusBadge status={app.current_status} />
-                        </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: t.textMuted,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {app.source ?? "—"}
-                        </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: t.textFaint,
-                            whiteSpace: "nowrap",
-                            textAlign: "center",
-                          }}
-                        >
-                          {formatDate(app.applied_at)}
-                        </td>
-                        <td
-                          style={{ padding: "8px 12px", textAlign: "center" }}
-                        >
-                          <button
-                            onClick={() => setEditingApp(app)}
-                            title="Edit"
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              fontSize: 15,
-                              color: t.textFaint,
-                              padding: "4px 6px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            ✏️
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                          <td style={{ padding: "12px 8px", textAlign: "center" }}>
+                            <span style={{
+                              display: "inline-block",
+                              fontSize: 10,
+                              color: hasDetails ? t.textMuted : t.textFaint,
+                              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+                              transition: "transform 0.2s ease",
+                              userSelect: "none",
+                            }}>▶</span>
+                          </td>
+                          <td style={{ padding: "12px 16px", fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.company}</td>
+                          <td style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.position ?? <span style={{ color: t.textFaint }}>—</span>}</td>
+                          <td style={{ padding: "12px 16px", textAlign: "center" }}><StatusBadge status={app.current_status} /></td>
+                          <td style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.source ?? "—"}</td>
+                          <td style={{ padding: "12px 16px", color: t.textFaint, whiteSpace: "nowrap", textAlign: "center" }}>{formatDate(app.applied_at)}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                            <button onClick={e => { e.stopPropagation(); setEditingApp(app) }} title="Edit"
+                              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: t.textFaint, padding: "4px 6px", borderRadius: 4 }}>✏️</button>
+                          </td>
+                        </tr>
+                        {/* Expandable detail row */}
+                        <tr style={{ borderBottom: `1px solid ${t.rowBorder}` }}>
+                          <td colSpan={7} style={{ padding: 0 }}>
+                            <div style={{
+                              maxHeight: expanded ? "400px" : "0px",
+                              overflow: "hidden",
+                              transition: "max-height 0.3s ease",
+                            }}>
+                              <div style={{ padding: "14px 16px 16px 48px", background: t.theadBg }}>
+                                {/* Meta row */}
+                                <div style={{ display: "flex", gap: 32, marginBottom: 14 }}>
+                                  <div>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Job Type</div>
+                                    <div style={{ fontSize: 13, color: t.text }}>{app.job_type ?? <span style={{ color: t.textFaint }}>—</span>}</div>
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Job Posting</div>
+                                    {app.job_url
+                                      ? <a href={app.job_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: "#3b82f6", textDecoration: "none" }}>View Job Posting ↗</a>
+                                      : <span style={{ fontSize: 13, color: t.textFaint }}>—</span>}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Last Updated</div>
+                                    <div style={{ fontSize: 13, color: t.textFaint }}>{formatDate(app.last_updated)}</div>
+                                  </div>
+                                </div>
+                                {/* Notes */}
+                                <div>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Notes</div>
+                                  {notesCache[app.application_id] === undefined ? (
+                                    <span style={{ fontSize: 13, color: t.textFaint }}>Loading...</span>
+                                  ) : notesCache[app.application_id].length === 0 ? (
+                                    <span style={{ fontSize: 13, color: t.textFaint }}>No notes — add one via the edit button.</span>
+                                  ) : (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                      {notesCache[app.application_id].map(note => (
+                                        <div key={note.note_id} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                                          <span style={{ fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>{formatDate(note.created_at)}</span>
+                                          <span style={{ fontSize: 13, color: t.textMuted }}>{note.content}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -932,7 +926,11 @@ export function Dashboard() {
           app={editingApp}
           token={token!}
           darkMode={darkMode}
-          onSaved={() => loadApplications(true)}
+          onSaved={() => {
+            loadApplications(true)
+            // Invalidate notes cache so updated notes show on next expand
+            if (editingApp) setNotesCache(prev => { const next = {...prev}; delete next[editingApp.application_id]; return next })
+          }}
           onDeleted={() => loadApplications(true)}
           onClose={() => setEditingApp(null)}
         />

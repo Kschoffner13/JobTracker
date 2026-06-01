@@ -19,6 +19,8 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
   const [company, setCompany]   = useState(app.company)
   const [position, setPosition] = useState(app.position ?? '')
   const [status, setStatus]     = useState(app.current_status)
+  const [jobType, setJobType]   = useState(app.job_type ?? '')
+  const [jobUrl, setJobUrl]     = useState(app.job_url ?? '')
   const [notes, setNotes]       = useState<Note[]>([])
   const [newNote, setNewNote]   = useState('')
   const [saving, setSaving]     = useState(false)
@@ -34,9 +36,11 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
     setSaving(true)
     try {
       await updateApplication(token, app.application_id, {
-        company_name:   company   !== app.company           ? company   || undefined : undefined,
-        position:       position  !== (app.position ?? '')  ? position  || undefined : undefined,
-        current_status: status    !== app.current_status    ? status                 : undefined,
+        company_name:   company  !== app.company           ? company  || undefined : undefined,
+        position:       position !== (app.position ?? '')  ? position || undefined : undefined,
+        current_status: status   !== app.current_status    ? status                : undefined,
+        job_type:       jobType  !== (app.job_type ?? '')  ? jobType  || null      : undefined,
+        job_url:        jobUrl   !== (app.job_url ?? '')   ? jobUrl   || null      : undefined,
       })
       onSaved()
       onClose()
@@ -99,7 +103,7 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
             <label style={label}>Position</label>
             <input value={position} onChange={e => setPosition(e.target.value)} style={input} placeholder="Job title" />
           </div>
-          <div style={{ ...field, marginBottom: 24 }}>
+          <div style={field}>
             <label style={label}>Status</label>
             <select value={status} onChange={e => setStatus(e.target.value as Application['current_status'])} style={input}>
               <option value="applied">Applied</option>
@@ -107,6 +111,25 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
               <option value="offer">Offer</option>
               <option value="rejected">Rejected</option>
             </select>
+          </div>
+          <div style={field}>
+            <label style={label}>Job Type</label>
+            <select value={jobType} onChange={e => setJobType(e.target.value)} style={input}>
+              <option value="">Not specified</option>
+              <option value="Remote">Remote</option>
+              <option value="Hybrid">Hybrid</option>
+              <option value="On-site">On-site</option>
+            </select>
+          </div>
+          <div style={{ ...field, marginBottom: 24 }}>
+            <label style={label}>Job URL</label>
+            <input
+              value={jobUrl}
+              onChange={e => setJobUrl(e.target.value)}
+              style={input}
+              placeholder="https://..."
+              type="url"
+            />
           </div>
 
           {/* Notes */}

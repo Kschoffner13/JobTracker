@@ -12,6 +12,7 @@ from email_patterns import (
     JOB_QUERY, STATUS_PATTERNS,
     DOMAIN_SOURCE_MAP, ATS_DOMAINS, PERSONAL_DOMAINS, HIRING_NOISE_RE,
     LINKEDIN_SUBJECT_PATTERNS, LINKEDIN_SENT_BODY_RE,
+    LINKEDIN_JOB_URL_RE, ZIPRECRUITER_JOB_URL_RE,
     ZIPRECRUITER_BODY_COMPANY_RE, ZIPRECRUITER_BODY_POSITION_RE, ZIPRECRUITER_SUBJECT_POSITION_RE,
     SUBJECT_COMPANY_PATTERNS, POSITION_PATTERNS, PLATFORM_VALIDATION,
     POSITION_STRIP_LEADING_RE, POSITION_FRAGMENT_RE,
@@ -114,6 +115,28 @@ def is_application_email(sender: str, subject: str, body: str) -> bool:
             text = f"{subject or ''} {body or ''}".lower()
             return any(re.search(p, text, re.IGNORECASE) for p in patterns)
     return True  # unknown platform — let through
+
+
+def extract_job_url(sender: str, body: str) -> str | None:
+    """Extract a link to the job posting from known platform email formats."""
+    if not body:
+        return None
+    domain_match = re.search(r"@([\w.-]+)", sender or "")
+    domain = domain_match.group(1).lower() if domain_match else ""
+
+    if "linkedin.com" in domain:
+        m = LINKEDIN_JOB_URL_RE.search(body)
+        if m:
+            url = m.group(1).rstrip(">.,")
+            # Strip tracking params for a clean URL
+            return url.split("?")[0].rstrip("/") + "/"
+
+    if "ziprecruiter.com" in domain:
+        m = ZIPRECRUITER_JOB_URL_RE.search(body)
+        if m:
+            return m.group(1).rstrip(">.,")
+
+    return None
 
 
 def detect_status(subject: str, body: str) -> str:

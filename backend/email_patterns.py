@@ -83,6 +83,20 @@ HIRING_NOISE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ─── Job URL extraction ───────────────────────────────────────────────────────
+
+# LinkedIn "sent" email body: "View job: https://www.linkedin.com/comm/jobs/view/12345/..."
+LINKEDIN_JOB_URL_RE = re.compile(
+    r"View job:\s*(https://www\.linkedin\.com\S+?)(?:>|\s|$)",
+    re.IGNORECASE,
+)
+
+# ZipRecruiter body: first link before the "Hi" greeting is the job link
+ZIPRECRUITER_JOB_URL_RE = re.compile(
+    r"(https://www\.ziprecruiter\.com/\S+?)(?:>|\s|$)",
+    re.IGNORECASE,
+)
+
 # ─── LinkedIn ─────────────────────────────────────────────────────────────────
 
 # Subject patterns: extract actual company name from LinkedIn notification subjects.

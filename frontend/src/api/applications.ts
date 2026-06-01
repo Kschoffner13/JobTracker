@@ -6,6 +6,8 @@ export interface Application {
   position: string | null
   current_status: 'applied' | 'interview' | 'offer' | 'rejected'
   source: string | null
+  job_type: string | null
+  job_url: string | null
   applied_at: string | null
   last_updated: string | null
   job_id: string
@@ -33,7 +35,7 @@ export async function getApplications(token: string): Promise<Application[]> {
   return res.json()
 }
 
-export async function updateApplication(token: string, id: number, data: { company_name?: string; position?: string; current_status?: string }): Promise<void> {
+export async function updateApplication(token: string, id: number, data: { company_name?: string; position?: string; current_status?: string; job_type?: string | null; job_url?: string | null }): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/applications/${id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
