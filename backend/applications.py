@@ -22,9 +22,6 @@ class ApplicationUpdate(BaseModel):
     job_url: str | None = None
 
 
-class NoteCreate(BaseModel):
-    content: str
-
 
 def _owns_application(cursor, application_id: int, user_id: str):
     cursor.execute(
@@ -134,33 +131,6 @@ def get_history(application_id: int, user: CurrentUser):
         return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 
-@router.post("/{application_id}/notes")
-def add_note(application_id: int, body: NoteCreate, user: CurrentUser):
-    user_id = user["sub"]
-    with get_pg_cursor() as cursor:
-        _owns_application(cursor, application_id, user_id)
-        cursor.execute("""
-            INSERT INTO notes (application_id, content)
-            VALUES (%s, %s)
-            RETURNING note_id, content, created_at
-        """, [application_id, body.content])
-        row = cursor.fetchone()
-    return {"note_id": row[0], "content": row[1], "created_at": row[2]}
-
-
-@router.get("/{application_id}/notes")
-def get_notes(application_id: int, user: CurrentUser):
-    user_id = user["sub"]
-    with get_pg_cursor() as cursor:
-        _owns_application(cursor, application_id, user_id)
-        cursor.execute("""
-            SELECT note_id, content, created_at
-            FROM notes
-            WHERE application_id = %s
-            ORDER BY created_at DESC
-        """, [application_id])
-        cols = [d[0] for d in cursor.description]
-        return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 
 @router.get("/analytics/summary")

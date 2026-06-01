@@ -21,11 +21,6 @@ export interface AnalyticsSummary {
   total: number
 }
 
-export interface Note {
-  note_id: number
-  content: string
-  created_at: string
-}
 
 export async function getApplications(token: string): Promise<Application[]> {
   const res = await fetch(`${BASE_URL}/api/applications`, {
@@ -52,23 +47,6 @@ export async function deleteApplication(token: string, id: number): Promise<void
   if (!res.ok) throw new Error('Failed to delete application')
 }
 
-export async function getNotes(token: string, id: number): Promise<Note[]> {
-  const res = await fetch(`${BASE_URL}/api/applications/${id}/notes`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) throw new Error('Failed to fetch notes')
-  return res.json()
-}
-
-export async function addNote(token: string, id: number, content: string): Promise<Note> {
-  const res = await fetch(`${BASE_URL}/api/applications/${id}/notes`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  })
-  if (!res.ok) throw new Error('Failed to add note')
-  return res.json()
-}
 
 export async function getAnalytics(token: string): Promise<AnalyticsSummary> {
   const res = await fetch(`${BASE_URL}/api/applications/analytics/summary`, {

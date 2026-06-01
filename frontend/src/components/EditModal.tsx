@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
-import { updateApplication, deleteApplication, getNotes, addNote, type Application, type Note } from '../api/applications'
+import { useState } from 'react'
+import { updateApplication, deleteApplication, type Application } from '../api/applications'
 
-const LIGHT = { surface:'#ffffff', border:'#e2e8f0', text:'#1e293b', textMuted:'#64748b', textFaint:'#94a3b8', input:'#f8fafc', noteBg:'#f8fafc' }
-const DARK  = { surface:'#1e293b', border:'#334155', text:'#f1f5f9', textMuted:'#94a3b8', textFaint:'#64748b', input:'#0f172a',  noteBg:'#162032' }
+const LIGHT = { surface:'#ffffff', border:'#e2e8f0', text:'#1e293b', textMuted:'#64748b', textFaint:'#94a3b8', input:'#f8fafc' }
+const DARK  = { surface:'#1e293b', border:'#334155', text:'#f1f5f9', textMuted:'#94a3b8', textFaint:'#64748b', input:'#0f172a' }
 
 interface Props {
   app: Application
@@ -21,16 +21,9 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
   const [status, setStatus]     = useState(app.current_status)
   const [jobType, setJobType]   = useState(app.job_type ?? '')
   const [jobUrl, setJobUrl]     = useState(app.job_url ?? '')
-  const [notes, setNotes]       = useState<Note[]>([])
-  const [newNote, setNewNote]   = useState('')
-  const [saving, setSaving]     = useState(false)
-  const [addingNote, setAddingNote] = useState(false)
+  const [saving, setSaving]         = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  useEffect(() => {
-    getNotes(token, app.application_id).then(setNotes).catch(() => {})
-  }, [])
+  const [deleting, setDeleting]     = useState(false)
 
   const handleSave = async () => {
     setSaving(true)
@@ -46,18 +39,6 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
       onClose()
     } finally {
       setSaving(false)
-    }
-  }
-
-  const handleAddNote = async () => {
-    if (!newNote.trim()) return
-    setAddingNote(true)
-    try {
-      const note = await addNote(token, app.application_id, newNote.trim())
-      setNotes(prev => [note, ...prev])
-      setNewNote('')
-    } finally {
-      setAddingNote(false)
     }
   }
 
@@ -77,10 +58,8 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
   const input = { padding: '8px 10px', borderRadius: 6, border: `1px solid ${t.border}`, background: t.input, color: t.text, fontSize: 14, outline: 'none' }
 
   return (
-    // Overlay
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-      {/* Modal card */}
-      <div onClick={e => e.stopPropagation()} style={{ background: t.surface, borderRadius: 14, width: '100%', maxWidth: 520, maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: t.surface, borderRadius: 14, width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
 
         {/* Header */}
         <div style={{ padding: '20px 24px 16px', borderBottom: `1px solid ${t.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -91,10 +70,8 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: t.textFaint, lineHeight: 1, padding: 4 }}>✕</button>
         </div>
 
-        {/* Scrollable body */}
-        <div style={{ overflowY: 'auto', padding: 24, flex: 1 }}>
-
-          {/* Edit fields */}
+        {/* Body */}
+        <div style={{ padding: 24 }}>
           <div style={field}>
             <label style={label}>Company</label>
             <input value={company} onChange={e => setCompany(e.target.value)} style={input} placeholder="Company name" />
@@ -121,48 +98,9 @@ export function EditModal({ app, token, darkMode, onSaved, onDeleted, onClose }:
               <option value="On-site">On-site</option>
             </select>
           </div>
-          <div style={{ ...field, marginBottom: 24 }}>
+          <div style={{ ...field, marginBottom: 0 }}>
             <label style={label}>Job URL</label>
-            <input
-              value={jobUrl}
-              onChange={e => setJobUrl(e.target.value)}
-              style={input}
-              placeholder="https://..."
-              type="url"
-            />
-          </div>
-
-          {/* Notes */}
-          <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 20 }}>
-            <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 600, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Notes</p>
-
-            {/* Add note */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-              <input
-                value={newNote}
-                onChange={e => setNewNote(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAddNote()}
-                placeholder="Add a note..."
-                style={{ ...input, flex: 1 }}
-              />
-              <button onClick={handleAddNote} disabled={addingNote || !newNote.trim()} style={{ padding: '8px 14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: !newNote.trim() ? 0.5 : 1 }}>
-                {addingNote ? '...' : 'Add'}
-              </button>
-            </div>
-
-            {/* Note list */}
-            {notes.length === 0 ? (
-              <p style={{ fontSize: 13, color: t.textFaint }}>No notes yet.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {notes.map(n => (
-                  <div key={n.note_id} style={{ background: t.noteBg, borderRadius: 8, padding: '10px 12px', border: `1px solid ${t.border}` }}>
-                    <p style={{ margin: 0, fontSize: 13, color: t.text, lineHeight: 1.5 }}>{n.content}</p>
-                    <p style={{ margin: '4px 0 0', fontSize: 11, color: t.textFaint }}>{new Date(n.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+            <input value={jobUrl} onChange={e => setJobUrl(e.target.value)} style={input} placeholder="https://..." type="url" />
           </div>
         </div>
 

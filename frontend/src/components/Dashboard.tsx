@@ -5,10 +5,8 @@ import { scanEmails } from "../api/emails";
 import {
   getApplications,
   getAnalytics,
-  getNotes,
   type Application,
   type AnalyticsSummary,
-  type Note,
 } from "../api/applications";
 import { EditModal } from "./EditModal";
 
@@ -323,23 +321,21 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newCount, setNewCount] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [darkMode, setDarkMode] = useState(
     () => localStorage.getItem("darkMode") === "true",
   );
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 4000)
+  }
   const [editingApp, setEditingApp] = useState<Application | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [notesCache, setNotesCache] = useState<Record<number, Note[]>>({});
 
-  const toggleExpand = (id: number) => {
-    const isExpanding = !expandedIds.has(id)
-    setExpandedIds(prev => { const next = new Set(prev); isExpanding ? next.add(id) : next.delete(id); return next })
-    if (isExpanding && notesCache[id] === undefined && token) {
-      getNotes(token, id)
-        .then(notes => setNotesCache(prev => ({ ...prev, [id]: notes })))
-        .catch(() => setNotesCache(prev => ({ ...prev, [id]: [] })))
-    }
-  }
+  const toggleExpand = (id: number) => setExpandedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
   const [filterStatus, setFilterStatus] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterFrom, setFilterFrom] = useState("");
@@ -394,24 +390,28 @@ export function Dashboard() {
     if (!token) return;
     setScanning(true);
     setError(null);
-    setNewCount(null);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min max
+    const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     try {
       const result = await scanEmails(token, controller.signal);
-      console.log("Scan result:", result);
       clearTimeout(timeout);
-      setNewCount(result.emails.length);
+      showToast(
+        result.emails.length === 0
+          ? 'No new emails found'
+          : `${result.emails.length} new email${result.emails.length !== 1 ? 's' : ''} ingested`,
+        'success'
+      )
     } catch (err) {
       clearTimeout(timeout);
       const isTimeout = err instanceof Error && err.name === "AbortError";
-      setError(
+      showToast(
         isTimeout
-          ? "Scan timed out — the Databricks warehouse may be waking up. Try again in a minute."
-          : "Scan failed. Please try again.",
-      );
+          ? 'Scan timed out — Databricks warehouse may be waking up. Try again in a minute.'
+          : 'Scan failed. Please try again.',
+        'error'
+      )
     } finally {
       setScanning(false);
       await loadApplications(true);
@@ -494,6 +494,17 @@ export function Dashboard() {
   );
 
   return (
+    <>
+    <style>{`
+      @keyframes jt-spin { to { transform: rotate(360deg); } }
+      @keyframes jt-pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+      @keyframes jt-faderow { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
+      @keyframes jt-toast-in { from { transform:translateX(110%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+      .jt-row { animation: jt-faderow 0.2s ease both; }
+      .jt-row:hover > td { background: rgba(148,163,184,0.07) !important; transition: background 0.15s; }
+      .jt-scan-btn { transition: filter 0.15s, box-shadow 0.15s, transform 0.15s; }
+      .jt-scan-btn:hover:not(:disabled) { filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 4px 14px rgba(59,130,246,0.4); }
+    `}</style>
     <div
       style={{
         minHeight: "100vh",
@@ -609,6 +620,7 @@ export function Dashboard() {
             }}
           >
             <button
+              className="jt-scan-btn"
               onClick={handleScan}
               disabled={scanning}
               style={{
@@ -622,15 +634,17 @@ export function Dashboard() {
                 cursor: scanning ? "default" : "pointer",
               }}
             >
-              {scanning ? "Scanning..." : "Scan Emails"}
+              {scanning && (
+                <span style={{
+                  display: 'inline-block', width: 14, height: 14,
+                  border: '2px solid rgba(255,255,255,0.35)',
+                  borderTopColor: '#fff', borderRadius: '50%',
+                  animation: 'jt-spin 0.7s linear infinite',
+                  marginRight: 8, verticalAlign: 'middle',
+                }} />
+              )}
+              {scanning ? 'Scanning...' : 'Scan Emails'}
             </button>
-            {newCount !== null && !scanning && (
-              <span style={{ fontSize: 13, color: t.textMuted }}>
-                {newCount === 0
-                  ? "No new emails found"
-                  : `${newCount} new email${newCount !== 1 ? "s" : ""} ingested`}
-              </span>
-            )}
             {error && (
               <span style={{ fontSize: 13, color: "#ef4444" }}>{error}</span>
             )}
@@ -812,7 +826,17 @@ export function Dashboard() {
                 </thead>
                 <tbody>
                   {loading || refreshing ? (
-                    <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: t.textFaint }}>{refreshing ? "Refreshing..." : "Loading..."}</td></tr>
+                    <>{[...Array(6)].map((_, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${t.rowBorder}` }}>
+                        <td style={{ padding: '14px 8px' }} />
+                        {[70, 55, 60, 50, 45].map((w, j) => (
+                          <td key={j} style={{ padding: '14px 16px' }}>
+                            <div style={{ height: 13, borderRadius: 4, background: t.barTrack, width: `${w}%`, animation: `jt-pulse 1.4s ease-in-out ${i * 0.1}s infinite` }} />
+                          </td>
+                        ))}
+                        <td style={{ padding: '14px 8px' }} />
+                      </tr>
+                    ))}</>
                   ) : filtered.length === 0 ? (
                     <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: t.textFaint }}>{applications.length === 0 ? "No applications yet — click Scan Emails to get started." : "No applications match the current filters."}</td></tr>
                   ) : filtered.map((app) => {
@@ -822,6 +846,7 @@ export function Dashboard() {
                       <Fragment key={app.application_id}>
                         {/* Main row */}
                         <tr
+                          className="jt-row"
                           onClick={() => toggleExpand(app.application_id)}
                           style={{ borderBottom: expanded ? "none" : `1px solid ${t.rowBorder}`, cursor: "pointer" }}
                         >
@@ -871,24 +896,6 @@ export function Dashboard() {
                                     <div style={{ fontSize: 13, color: t.textFaint }}>{formatDate(app.last_updated)}</div>
                                   </div>
                                 </div>
-                                {/* Notes */}
-                                <div>
-                                  <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Notes</div>
-                                  {notesCache[app.application_id] === undefined ? (
-                                    <span style={{ fontSize: 13, color: t.textFaint }}>Loading...</span>
-                                  ) : notesCache[app.application_id].length === 0 ? (
-                                    <span style={{ fontSize: 13, color: t.textFaint }}>No notes — add one via the edit button.</span>
-                                  ) : (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                      {notesCache[app.application_id].map(note => (
-                                        <div key={note.note_id} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-                                          <span style={{ fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>{formatDate(note.created_at)}</span>
-                                          <span style={{ fontSize: 13, color: t.textMuted }}>{note.content}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
                               </div>
                             </div>
                           </td>
@@ -926,15 +933,26 @@ export function Dashboard() {
           app={editingApp}
           token={token!}
           darkMode={darkMode}
-          onSaved={() => {
-            loadApplications(true)
-            // Invalidate notes cache so updated notes show on next expand
-            if (editingApp) setNotesCache(prev => { const next = {...prev}; delete next[editingApp.application_id]; return next })
-          }}
+          onSaved={() => loadApplications(true)}
           onDeleted={() => loadApplications(true)}
           onClose={() => setEditingApp(null)}
         />
       )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+          background: toast.type === 'success' ? '#10b981' : '#ef4444',
+          color: '#fff', borderRadius: 10, padding: '12px 20px',
+          fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+          animation: 'jt-toast-in 0.3s ease',
+          maxWidth: 360,
+        }}>
+          {toast.type === 'success' ? '✓ ' : '✕ '}{toast.message}
+        </div>
+      )}
     </div>
+    </>
   );
 }
