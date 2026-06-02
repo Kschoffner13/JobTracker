@@ -1,5 +1,5 @@
-# Handles Google OAuth sign-in: exchanges the auth code for tokens, upserts the user in
-# Databricks and Postgres, issues a 30-day JWT, and kicks off a background email scan for new users.
+# Google OAuth sign-in: exchanges the auth code for tokens, upserts the user in
+# Databricks and Postgres, issues a 30-day JWT, and kicks off a background scan for new users.
 
 from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
 from pydantic import BaseModel
@@ -8,15 +8,16 @@ import google_auth_oauthlib.flow
 import jwt
 import os
 import datetime
-from db import get_cursor, table
-from postgres import get_pg_cursor
-from email_monitor import run_scan
+
+from core.db import get_cursor, table
+from core.postgres import get_pg_cursor
+from services.email_scanner import run_scan
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+JWT_SECRET    = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
 
 SCOPES = [
     "openid",
@@ -38,10 +39,7 @@ CLIENT_CONFIG = {
 def make_jwt(user_id: str, email: str, name: str, picture: str) -> str:
     return jwt.encode(
         {
-            "sub": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
+            "sub": user_id, "email": email, "name": name, "picture": picture,
             "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
         },
         JWT_SECRET,
@@ -73,19 +71,17 @@ def google_auth(body: GoogleAuthRequest, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {str(e)}")
 
-    creds = flow.credentials
-
+    creds   = flow.credentials
     service = build("oauth2", "v2", credentials=creds)
-    info = service.userinfo().get().execute()
+    info    = service.userinfo().get().execute()
 
-    user_id = info["id"]
-    email = info["email"]
+    user_id          = info["id"]
+    email            = info["email"]
     new_refresh_token = creds.refresh_token
 
     with get_cursor() as cursor:
         cursor.execute(
-            f"SELECT refresh_token FROM {table('system', 'users')} WHERE user_id = ?",
-            [user_id],
+            f"SELECT refresh_token FROM {table('system', 'users')} WHERE user_id = ?", [user_id]
         )
         existing = cursor.fetchone()
 
@@ -109,7 +105,6 @@ def google_auth(body: GoogleAuthRequest, background_tasks: BackgroundTasks):
             )
         is_new_user = True
 
-    # Upsert user in Postgres
     with get_pg_cursor() as pg:
         pg.execute("""
             INSERT INTO users (user_id, email, name, picture)
@@ -126,26 +121,14 @@ def google_auth(body: GoogleAuthRequest, background_tasks: BackgroundTasks):
 
     return {
         "token": make_jwt(user_id, email, info.get("name", ""), info.get("picture", "")),
-        "user": {
-            "id": user_id,
-            "email": email,
-            "name": info.get("name", ""),
-            "picture": info.get("picture", ""),
-        },
+        "user": {"id": user_id, "email": email, "name": info.get("name", ""), "picture": info.get("picture", "")},
     }
 
 
 @router.get("/me")
 def get_me(authorization: str = Header(...)):
-    # The JWT already contains the user's profile — no Databricks query needed.
-    # The signature is validated by decode_jwt, so the payload can be trusted directly.
     payload = decode_jwt(authorization)
-    return {
-        "id":      payload["sub"],
-        "email":   payload["email"],
-        "name":    payload["name"],
-        "picture": payload["picture"],
-    }
+    return {"id": payload["sub"], "email": payload["email"], "name": payload["name"], "picture": payload["picture"]}
 
 
 @router.post("/logout")

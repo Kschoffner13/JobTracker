@@ -1,26 +1,11 @@
-# REST endpoints for managing job applications stored in Postgres. Supports listing,
-# updating (company/position/status), status history, notes, and analytics summary.
+# Application CRUD endpoints: list, update, delete, status history, and analytics.
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from deps import CurrentUser
-from postgres import get_pg_cursor
+from core.deps import CurrentUser
+from core.postgres import get_pg_cursor
+from models.schemas import ApplicationUpdate, VALID_STATUSES, VALID_JOB_TYPES
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
-
-VALID_STATUSES = {"applied", "interview", "offer", "rejected"}
-
-
-VALID_JOB_TYPES = {"Remote", "Hybrid", "On-site"}
-
-
-class ApplicationUpdate(BaseModel):
-    company_name: str | None = None
-    position: str | None = None
-    current_status: str | None = None
-    job_type: str | None = None
-    job_url: str | None = None
-
 
 
 def _owns_application(cursor, application_id: int, user_id: str):
@@ -30,17 +15,6 @@ def _owns_application(cursor, application_id: int, user_id: str):
     )
     if not cursor.fetchone():
         raise HTTPException(status_code=404, detail="Application not found")
-
-
-@router.delete("/{application_id}")
-def delete_application(application_id: int, user: CurrentUser):
-    user_id = user["sub"]
-    with get_pg_cursor() as cursor:
-        _owns_application(cursor, application_id, user_id)
-        cursor.execute("DELETE FROM notes WHERE application_id = %s", [application_id])
-        cursor.execute("DELETE FROM status_events WHERE application_id = %s", [application_id])
-        cursor.execute("DELETE FROM applications WHERE application_id = %s", [application_id])
-    return {"ok": True}
 
 
 @router.get("")
@@ -116,6 +90,16 @@ def update_application(application_id: int, body: ApplicationUpdate, user: Curre
     return {"ok": True}
 
 
+@router.delete("/{application_id}")
+def delete_application(application_id: int, user: CurrentUser):
+    user_id = user["sub"]
+    with get_pg_cursor() as cursor:
+        _owns_application(cursor, application_id, user_id)
+        cursor.execute("DELETE FROM status_events WHERE application_id = %s", [application_id])
+        cursor.execute("DELETE FROM applications WHERE application_id = %s", [application_id])
+    return {"ok": True}
+
+
 @router.get("/{application_id}/history")
 def get_history(application_id: int, user: CurrentUser):
     user_id = user["sub"]
@@ -131,45 +115,36 @@ def get_history(application_id: int, user: CurrentUser):
         return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 
-
-
 @router.get("/analytics/summary")
 def get_analytics(user: CurrentUser):
     user_id = user["sub"]
     with get_pg_cursor() as cursor:
-        # Status breakdown
         cursor.execute("""
             SELECT current_status, COUNT(*) AS total
-            FROM applications
-            WHERE user_id = %s
+            FROM applications WHERE user_id = %s
             GROUP BY current_status
         """, [user_id])
         status_counts = {r[0]: r[1] for r in cursor.fetchall()}
 
-        # Applications per week (last 12 weeks)
         cursor.execute("""
-            SELECT
-                DATE_TRUNC('week', applied_at) AS week,
-                COUNT(*) AS total
+            SELECT DATE_TRUNC('week', applied_at) AS week, COUNT(*) AS total
             FROM applications
             WHERE user_id = %s AND applied_at >= NOW() - INTERVAL '12 weeks'
-            GROUP BY week
-            ORDER BY week ASC
+            GROUP BY week ORDER BY week ASC
         """, [user_id])
         weekly = [{"week": str(r[0]), "total": r[1]} for r in cursor.fetchall()]
 
-        # Average days applied → interview
         cursor.execute("""
             SELECT AVG(EXTRACT(EPOCH FROM (i.changed_at - a.applied_at)) / 86400)
             FROM applications a
             JOIN status_events i ON i.application_id = a.application_id AND i.status = 'interview'
             WHERE a.user_id = %s
         """, [user_id])
-        avg_days_to_interview = cursor.fetchone()[0]
+        avg_days = cursor.fetchone()[0]
 
     return {
         "status_counts": status_counts,
         "weekly_applications": weekly,
-        "avg_days_to_interview": round(avg_days_to_interview, 1) if avg_days_to_interview else None,
+        "avg_days_to_interview": round(avg_days, 1) if avg_days else None,
         "total": sum(status_counts.values()),
     }

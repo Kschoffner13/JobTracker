@@ -1,6 +1,3 @@
-# Entry point for the FastAPI application. Loads environment variables, configures CORS,
-# and registers the auth, email, and applications routers.
-
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -9,9 +6,10 @@ os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import auth
-import email_monitor
-import applications
+
+from api.auth import router as auth_router
+from api.emails import router as emails_router
+from api.applications import router as applications_router
 
 app = FastAPI(title="Job Tracker API", version="1.0")
 
@@ -23,9 +21,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(email_monitor.router)
-app.include_router(applications.router)
+app.include_router(auth_router)
+app.include_router(emails_router)
+app.include_router(applications_router)
 
 
 @app.get("/")

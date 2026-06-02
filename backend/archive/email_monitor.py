@@ -10,8 +10,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from deps import CurrentUser
 from db import get_cursor, table
-from postgres import get_pg_cursor
-from email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position, detect_source, is_application_email, extract_job_url
+from backend.archive.postgres import get_pg_cursor
+from backend.email_config import JOB_QUERY, make_job_id, decode_body, detect_status, extract_company, extract_position, detect_source, is_application_email, extract_job_url
 
 router = APIRouter(prefix="/api", tags=["emails"])
 
