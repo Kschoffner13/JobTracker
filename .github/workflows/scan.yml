@@ -1,0 +1,34 @@
+name: Hourly Email Scan
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # runs every hour at :00
+  workflow_dispatch:        # allows manual trigger from the GitHub Actions UI
+
+jobs:
+  scan:
+    name: Trigger email scan for all users
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Call scan endpoint
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${{ secrets.API_URL }}/api/emails/scan/all" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 30)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+
+          echo "Response: $body"
+          echo "HTTP status: $http_code"
+
+          if [ "$http_code" != "200" ]; then
+            echo "Scan trigger failed with HTTP $http_code"
+            exit 1
+          fi
+
+          echo "Scan started successfully. Check server logs for results."

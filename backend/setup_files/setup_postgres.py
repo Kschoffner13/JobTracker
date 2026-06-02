@@ -4,7 +4,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from postgres import get_pg_cursor
+from backend.archive.postgres import get_pg_cursor
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
