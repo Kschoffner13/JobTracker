@@ -1,139 +1,160 @@
 # JobTracker
 
-A full-stack application that monitors your Gmail inbox for job application emails, automatically classifies them by company and status, and displays them on a dashboard. Built with React, FastAPI, Databricks Delta Lake, and Postgres (Supabase).
+A full-stack application that monitors your Gmail inbox for job application emails, automatically classifies them by company, status, and position, and displays them on an interactive dashboard. Built with React, FastAPI, Databricks Delta Lake, and Postgres (Supabase).
 
 ## What It Does
 
 - Authenticates users via Google OAuth 2.0
-- On first sign-in, scans the last 6 months of Gmail for job-related emails
-- Classifies each email by company and application status (applied, interview, offer, rejected)
-- Stores raw and classified data in a Databricks medallion architecture (Bronze → Silver)
-- Syncs normalized, user-editable data to Postgres (Supabase)
-- Rebuilds an analytical Gold star schema in Databricks from Postgres after each sync
-- Runs a scheduled Databricks Workflow to automatically process new emails hourly
-- Exposes a REST API for manual scans, application edits, notes, history, and analytics
+- On first sign-in, automatically scans the last 6 months of Gmail history
+- Filters out promotional emails — only real job application emails are stored
+- Classifies each email: company, position, status (applied/interview/offer/rejected), source platform, and job URL
+- Stores raw data in Databricks (Bronze/Silver/Gold medallion architecture)
+- Syncs normalized, user-editable records to Postgres (Supabase) — the primary data source for the UI
+- Runs automated scans every 15 minutes via GitHub Actions
+- Exposes a REST API for manual scans, application edits, analytics, and status history
 
 ## Architecture
 
 ```
-frontend/               React 19 + TypeScript + Vite
+frontend/                     React 19 + TypeScript + Vite
 backend/
-  main.py               App entry point, CORS, router registration
-  auth.py               Google OAuth code exchange, JWT session management
-  email_monitor.py      Gmail scanning, Bronze/Silver writes, Postgres sync, Gold rebuild
-  applications.py       CRUD + analytics endpoints (reads/writes Postgres)
-  db.py                 Databricks SQL connection helper
-  postgres.py           Supabase connection pool
-  deps.py               JWT auth dependency for protected routes
-  setup_db.py           One-time Databricks Delta table creation
-  setup_postgres.py     One-time Postgres table creation
-  jobs/
-    email_sync.py       Notebook 1 — Bronze ingestion (all users, scheduled)
-    bronze_to_silver.py Notebook 2 — Classify Bronze emails → Silver
-    silver_to_postgres.py Notebook 3 — Sync Silver → Postgres
-    rebuild_gold.py     Notebook 4 — Rebuild Gold star schema from Postgres
+  main.py                     App entry point, CORS, router registration
+  email_config.py             Email classification logic (shared with Databricks)
+  email_patterns.py           Platform-specific patterns and regexes
+  core/
+    deps.py                   JWT auth dependency
+    db.py                     Databricks SQL connection
+    postgres.py               Supabase connection pool
+  models/
+    schemas.py                Pydantic request/response models
+  api/
+    auth.py                   Google OAuth, JWT issuance
+    emails.py                 Manual scan + cron scan endpoints
+    applications.py           CRUD, analytics, status history
+  services/
+    email_scanner.py          Gmail scanning, Postgres sync, Gold rebuild
+  jobs/                       Databricks notebooks (background pipeline)
+    email_sync.py             Bronze ingestion (all users)
+    bronze_to_silver.py       Classify Bronze → Silver
+    silver_to_postgres.py     Sync Silver → Postgres
+    rebuild_gold.py           Rebuild Gold star schema
+  setup_files/
+    setup_db.py               One-time Databricks table creation
+    setup_postgres.py         One-time Postgres table creation
+.github/
+  workflows/
+    scan.yml                  GitHub Actions cron job (every 15 min)
 ```
 
 ## Data Architecture
 
-### Databricks — Medallion (Delta Lake)
+### Scan pipeline (per request)
 
 ```
 Gmail API
-    │
+    │  (classified in memory — no Databricks in the hot path)
     ▼
-00_bronze.emails          Raw email payloads (append-only, deduped by message_id)
+Postgres (Supabase)           ← written synchronously, UI reads from here
     │
-    ▼
-01_silver.applications    Classified records — company, status, subject, sender, job_id
+    ▼  (background task)
+Databricks Bronze/Silver      ← written after response is returned
     │
-    ▼
+    ▼  (background task)
+Databricks Gold               ← star schema rebuilt from Postgres
+```
+
+### Databricks — Medallion (Delta Lake)
+
+```
+00_bronze.emails          Raw email payloads (append-only)
+01_silver.applications    Classified: company, status, position, source, job_url
 02_gold
-  ├── dim_status          Lookup: applied / interview / offer / rejected + rank
-  ├── dim_companies       One row per company (name, domain)
-  └── fact_applications   One row per application — FKs to dim tables
+  ├── dim_status          Lookup table
+  ├── dim_companies       One row per company
+  └── fact_applications   One row per application
 ```
 
-### Postgres (Supabase) — Normalized / Transactional
+### Postgres (Supabase) — Primary application database
 
 ```
-users               Google profile + created_at
-companies           Deduplicated company names and domains
-applications        One row per job (user-editable: position, status, company)
-status_events       Audit log of every status change, with source email reference
-notes               Free-text notes attached to an application
+users               Google profile + OAuth refresh token reference
+companies           Deduplicated company names
+applications        One row per job — editable: company, position, status, job_type, job_url
+status_events       Audit log of every status change
 ```
 
-**Data flow**: Bronze/Silver are pipeline-owned (append-only). Postgres is user-owned — users edit applications here. Gold is rebuilt from Postgres after every scan or edit, so analytics always reflect the latest user corrections.
+### Email classification
 
-**Status detection** runs regex patterns against subject + body in priority order:
-`offer → interview → rejected → applied (default)`
-
-**Company extraction** parses the sender's email domain, ignoring personal providers (Gmail, Yahoo, etc.)
-
-**job_id** is a SHA-256 hash of `provider:thread_id`, giving each application a stable ID that traces through every tier and supports future non-Gmail providers.
+- **Status detection** uses regex patterns: `offer → interview → rejected → applied`
+- **Company extraction** handles LinkedIn notifications, ATS platforms (Greenhouse, Lever, Ashby, BambooHR, Workday, etc.), and company-owned domains
+- **Position extraction** has platform-specific parsers for ZipRecruiter, LinkedIn, and generic ATS subject formats
+- **Source detection** maps sender domain to the platform (LinkedIn, Greenhouse, Company Website, etc.)
+- **Promotional filtering** blocks non-application emails from known platforms before they reach the database
 
 ### API Routes
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/auth/google` | Exchange Google auth code → JWT |
-| GET | `/api/auth/me` | Get current user from JWT |
-| POST | `/api/auth/logout` | Invalidate session |
-| POST | `/api/emails/scan` | Trigger incremental Gmail scan |
-| GET | `/api/applications` | List all applications (from Postgres) |
-| PATCH | `/api/applications/{id}` | Update company, position, or status |
-| GET | `/api/applications/{id}/history` | Status change history |
-| POST | `/api/applications/{id}/notes` | Add a note |
-| GET | `/api/applications/{id}/notes` | List notes |
-| GET | `/api/applications/analytics/summary` | Status counts, weekly activity, avg days to interview |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/auth/google` | — | Exchange Google auth code → JWT |
+| GET | `/api/auth/me` | JWT | Get current user from token |
+| POST | `/api/auth/logout` | JWT | Invalidate session |
+| POST | `/api/emails/scan` | JWT | Trigger incremental Gmail scan |
+| POST | `/api/emails/scan/all` | Cron secret | Scan all users (GitHub Actions) |
+| GET | `/api/applications` | JWT | List all applications |
+| PATCH | `/api/applications/{id}` | JWT | Update company, position, status, job_type, job_url |
+| DELETE | `/api/applications/{id}` | JWT | Delete an application |
+| GET | `/api/applications/{id}/history` | JWT | Status change history |
+| GET | `/api/applications/analytics/summary` | JWT | Status counts, weekly activity, avg days to interview |
 
 ## Prerequisites
 
 - Python 3.11+
 - Node.js 18+
 - A [Google Cloud project](https://console.cloud.google.com) with the Gmail API enabled
-- A Databricks workspace with a SQL Warehouse
+- A [Databricks](https://databricks.com) workspace (Community Edition works for development)
 - A [Supabase](https://supabase.com) project (free tier works)
+- A GitHub repository (for GitHub Actions cron)
 
-## Setup
+## Local Development Setup
 
-### 1. Google Cloud
+### 1. Start both servers with one command
 
-1. Go to **APIs & Services → Enabled APIs** and enable the **Gmail API**
-2. Go to **APIs & Services → OAuth consent screen**
-   - User type: External
-   - Add scope: `https://www.googleapis.com/auth/gmail.readonly`
-   - Add your Gmail as a test user
-3. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
-   - Application type: Web application
+```bash
+npm install       # install concurrently at the root
+npm run dev       # starts FastAPI (port 8000) + Vite (port 5173)
+```
+
+### 2. Google Cloud
+
+1. Enable the **Gmail API** under APIs & Services
+2. Configure the **OAuth consent screen** — External, add `gmail.readonly` scope, add your Gmail as test user
+3. Create an **OAuth client ID** — Web application
    - Authorized JavaScript origins: `http://localhost:5173`
    - Authorized redirect URIs: `http://localhost:5173`
 4. Copy the **Client ID** and **Client Secret**
 
-### 2. Supabase
+### 3. Supabase
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **Settings → Database → Connection string → URI** and copy the URL
-3. If your password contains special characters (`@`, `#`, etc.), URL-encode them (e.g. `@` → `%40`, `#` → `%23`)
+1. Create a project at [supabase.com](https://supabase.com)
+2. Go to **Settings → Database → Connection string → URI** and copy it
+3. URL-encode any special characters in your password (`@` → `%40`, `#` → `%23`)
 
-### 3. Backend
+### 4. Backend environment
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-Copy the example env file and fill in your values:
-```bash
-cp .env.example .env
-```
+Create `backend/.env`:
 
 ```env
+# Google OAuth
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 JWT_SECRET_KEY=        # python -c "import secrets; print(secrets.token_hex(32))"
 
+# Databricks
 DATABRICKS_HOST=your-workspace.cloud.databricks.com
 DATABRICKS_TOKEN=your-personal-access-token
 DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
@@ -143,81 +164,77 @@ DATABRICKS_SCHEMA_BRONZE=00_bronze
 DATABRICKS_SCHEMA_SILVER=01_silver
 DATABRICKS_SCHEMA_GOLD=02_gold
 
+# Postgres (Supabase)
 POSTGRES_URL=postgresql://postgres:yourpassword@db.yourref.supabase.co:5432/postgres
+
+# GitHub Actions cron secret
+CRON_SECRET=        # python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Create all tables (run once each):
-```bash
-python setup_db.py        # Databricks Delta tables
-python setup_postgres.py  # Supabase Postgres tables
-```
-
-Start the API:
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-Interactive API docs: `http://localhost:8000/docs`
-
-### 4. Frontend
+Create all database tables (run once):
 
 ```bash
-cd frontend
-npm install
+cd backend
+python setup_files/setup_db.py        # Databricks Delta tables
+python setup_files/setup_postgres.py  # Supabase Postgres tables
 ```
+
+### 5. Frontend environment
+
+Create `frontend/.env`:
 
 ```env
 VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-```bash
-npm run dev
-```
+## Automated Scanning (GitHub Actions)
 
-App runs at `http://localhost:5173`
-
-### 5. Databricks Workflow (Automated Pipeline)
-
-The pipeline runs as 4 chained notebook tasks in a Databricks Workflow:
-
-| Task | Notebook | What it does |
-|------|----------|--------------|
-| 1 | `email_sync.py` | Scans Gmail for all users, writes to Bronze |
-| 2 | `bronze_to_silver.py` | Classifies new Bronze rows → Silver |
-| 3 | `silver_to_postgres.py` | Syncs new Silver rows → Postgres |
-| 4 | `rebuild_gold.py` | Rebuilds Gold star schema from Postgres |
+A workflow in `.github/workflows/scan.yml` calls `POST /api/emails/scan/all` every 15 minutes, scanning new emails for all registered users automatically.
 
 **Setup:**
 
-1. Create a Databricks Secret Scope named `job-tracker`:
-   ```
-   https://<your-workspace>.azuredatabricks.net/#secrets/createScope
-   ```
-
-2. Add secrets:
+1. Generate a cron secret:
    ```bash
-   databricks secrets put-secret job-tracker google-client-id
-   databricks secrets put-secret job-tracker google-client-secret
-   databricks secrets put-secret job-tracker postgres-url
+   python -c "import secrets; print(secrets.token_hex(32))"
    ```
 
-3. Import all four notebooks from `backend/jobs/` into your Databricks Workspace
+2. Add the same value to `CRON_SECRET` in `.env` and as a GitHub secret
 
-4. Go to **Workflows → Create Job**, add 4 tasks in order (each depending on the previous), set schedule to hourly (`0 * * * *`)
+3. Add your deployed backend URL as a GitHub secret:
 
-5. Click **Run now** to verify
+   | Secret | Value |
+   |--------|-------|
+   | `CRON_SECRET` | The random string from step 1 |
+   | `API_URL` | Your deployed backend URL (e.g. `https://your-app.onrender.com`) |
 
-> Note: Databricks Community Edition limits job schedules to hourly minimum. User-triggered scans from the frontend run the full pipeline immediately via FastAPI.
+4. To test manually: GitHub repo → **Actions → Hourly Email Scan → Run workflow**
+
+> The GitHub Action only works once the backend is deployed to a public URL. For local development, use the **Scan Emails** button in the frontend.
+
+## Deployment
+
+| Layer | Recommended service |
+|-------|-------------------|
+| Frontend | [Vercel](https://vercel.com) — free, auto-deploys from GitHub |
+| Backend | [Render](https://render.com) — free tier, or Railway ($5/month) for always-on |
+| Database | Supabase (already hosted) |
+| Data lake | Databricks (already hosted) |
+| Scheduling | GitHub Actions (free) |
+
+**Before deploying**, update `main.py` CORS to allow your Vercel domain:
+```python
+allow_origins=["https://your-app.vercel.app"]
+```
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Frontend | React 19, TypeScript, Vite |
-| Backend | Python, FastAPI, Uvicorn |
+| Backend | Python 3.11, FastAPI, Uvicorn |
 | Auth | Google OAuth 2.0, JWT (30-day expiry) |
 | Email | Gmail API (`gmail.readonly`) |
-| Data Lake | Databricks Delta Lake (medallion architecture) |
+| Data Lake | Databricks Delta Lake (Bronze / Silver / Gold) |
 | Transactional DB | Postgres via Supabase |
-| Pipeline | Databricks Workflows (4-task chained job) |
+| Scheduling | GitHub Actions (every 15 min) |
