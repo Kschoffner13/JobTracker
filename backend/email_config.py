@@ -14,6 +14,7 @@ from email_patterns import (
     LINKEDIN_SUBJECT_PATTERNS, LINKEDIN_SENT_BODY_RE,
     LINKEDIN_JOB_URL_RE, ZIPRECRUITER_JOB_URL_RE,
     ZIPRECRUITER_BODY_COMPANY_RE, ZIPRECRUITER_BODY_POSITION_RE, ZIPRECRUITER_SUBJECT_POSITION_RE,
+    INDEED_SUBJECT_POSITION_RE, INDEED_BODY_COMPANY_RE, INDEED_JOB_URL_FROM_HTML_RE,
     SUBJECT_COMPANY_PATTERNS, POSITION_PATTERNS, PLATFORM_VALIDATION,
     POSITION_STRIP_LEADING_RE, POSITION_FRAGMENT_RE,
 )
@@ -22,6 +23,41 @@ from email_patterns import (
 
 def make_job_id(provider: str, thread_id: str) -> str:
     return hashlib.sha256(f"{provider}:{thread_id}".encode()).hexdigest()[:16]
+
+
+def decode_html_body(payload: dict) -> str:
+    """Get the HTML body and strip tags to plain text.
+    Used for platforms like Indeed where the plain text part is too sparse
+    to contain useful information like company name or job title.
+    """
+    def _get_html(parts: list) -> str:
+        for part in parts:
+            if part.get("mimeType") == "text/html":
+                data = part.get("body", {}).get("data", "")
+                if data:
+                    return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")
+            if "parts" in part:
+                result = _get_html(part["parts"])
+                if result:
+                    return result
+        return ""
+
+    html = _get_html(payload.get("parts", [])) if "parts" in payload else ""
+    if not html:
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            html = base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")
+    if not html:
+        return ""
+
+    # Remove style/script blocks first — their content has no tags so it
+    # would survive the tag-stripping step and pollute the output with CSS/JS
+    html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&[a-z]+;|&#\d+;", " ", text)
+    return re.sub(r"\s+", " ", text).strip()[:3000]
 
 
 def decode_body(payload: dict) -> str:
@@ -68,6 +104,11 @@ def _validate_position(pos: str) -> str | None:
 
 def extract_position(subject: str, body: str) -> str | None:
     # ── Trusted platform-specific extractors (no validation needed) ───────────
+
+    # Indeed: subject "Indeed Application: [Position]"
+    m = INDEED_SUBJECT_POSITION_RE.search(subject or "")
+    if m:
+        return m.group(1).strip()
 
     # ZipRecruiter body: "Your application is complete for [Position] ([id]) at [Company]"
     if body:
@@ -117,12 +158,45 @@ def is_application_email(sender: str, subject: str, body: str) -> bool:
     return True  # unknown platform — let through
 
 
-def extract_job_url(sender: str, body: str) -> str | None:
-    """Extract a link to the job posting from known platform email formats."""
-    if not body:
+def get_raw_html(payload: dict) -> str:
+    """Return the unprocessed HTML body from an email payload.
+    Used when we need to inspect href attributes before they are stripped.
+    """
+    def _find(parts: list) -> str:
+        for part in parts:
+            if part.get("mimeType") == "text/html":
+                data = part.get("body", {}).get("data", "")
+                if data:
+                    return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")
+            if "parts" in part:
+                r = _find(part["parts"])
+                if r:
+                    return r
+        return ""
+
+    if "parts" in payload:
+        return _find(payload.get("parts", []))
+    data = payload.get("body", {}).get("data", "")
+    return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore") if data else ""
+
+
+def extract_job_url(sender: str, body: str, raw_html: str = "") -> str | None:
+    """Extract a link to the job posting from known platform email formats.
+    raw_html should be passed for platforms where URLs live in href attributes
+    (e.g. Indeed) that are stripped during normal body processing.
+    """
+    if not body and not raw_html:
         return None
     domain_match = re.search(r"@([\w.-]+)", sender or "")
     domain = domain_match.group(1).lower() if domain_match else ""
+
+    # Indeed: job URL is in an href attribute in the raw HTML
+    if "indeed.com" in domain and raw_html:
+        m = INDEED_JOB_URL_FROM_HTML_RE.search(raw_html)
+        if m:
+            url = m.group(1).rstrip(">.,\"'")
+            # Keep only up to the jk param for a clean URL
+            return url.split("&")[0] if "viewjob" in url else url
 
     if "linkedin.com" in domain:
         m = LINKEDIN_JOB_URL_RE.search(body)
@@ -194,6 +268,12 @@ def extract_company(sender: str, subject: str = "", body: str = "") -> str:
     domain = domain_match.group(1).lower() if domain_match else ""
     parts = domain.split(".")
     base = parts[-2] if len(parts) >= 2 else parts[0]
+
+    # Indeed: sender is indeedapply@indeed.com — company is in the body "sent to [Company]." line
+    if "indeed.com" in domain and "indeedapply" in (sender or "").lower() and body:
+        m = INDEED_BODY_COMPANY_RE.search(body)
+        if m:
+            return m.group(1).strip()
 
     # ZipRecruiter: company is in the body confirmation line
     if "ziprecruiter.com" in domain and body:

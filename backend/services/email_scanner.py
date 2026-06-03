@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from core.db import get_cursor, table
 from core.postgres import get_pg_cursor
 from email_config import (
-    JOB_QUERY, make_job_id, decode_body,
+    JOB_QUERY, make_job_id, decode_body, decode_html_body, get_raw_html,
     detect_status, extract_company, extract_position,
     detect_source, is_application_email, extract_job_url,
 )
@@ -44,7 +44,7 @@ def get_watermark(user_id: str) -> str | None:
         )
         row = cursor.fetchone()
     if row and row[0]:
-        return (row[0] - timedelta(days=1)).strftime("%Y/%m/%d")
+        return (row[0] - timedelta(days=7)).strftime("%Y/%m/%d")
     return None
 
 
@@ -85,6 +85,15 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None):
             subject   = headers.get("Subject", "")
             sender    = headers.get("From", "")
             body      = decode_body(msg["payload"])
+
+            # Indeed plain text is sparse — swap in the richer HTML-stripped body
+            # Also keep raw HTML so we can pull job URLs from href attributes
+            raw_html = ""
+            if "indeedapply" in sender.lower():
+                raw_html = get_raw_html(msg["payload"])
+                html_body = decode_html_body(msg["payload"])
+                if html_body:
+                    body = html_body
             thread_id = msg.get("threadId", "")
             provider  = "gmail"
             job_id    = make_job_id(provider, thread_id)
@@ -103,7 +112,7 @@ def run_scan(user_id: str, refresh_token: str, after_date: str | None = None):
             company  = extract_company(sender, subject, body)
             position = extract_position(subject, body)
             source   = detect_source(sender)
-            job_url  = extract_job_url(sender, body)
+            job_url  = extract_job_url(sender, body, raw_html)
 
             bronze_batch.append([user_id, msg_id, thread_id, job_id, provider, subject, sender, received_at, body])
             silver_batch.append([user_id, msg_id, job_id, provider, company, position, status, subject, sender, received_at, source])

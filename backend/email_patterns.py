@@ -11,17 +11,41 @@ JOB_QUERY = (
     'subject:("your application" OR "thank you for applying" OR "application received" '
     'OR interview OR "job offer" OR offer OR rejected OR "we regret" OR '
     '"not moving forward" OR "next steps" OR "hiring process" OR '
-    '"got your resume" OR "application is complete")'
+    '"got your resume" OR "application is complete" OR "Indeed Application")'
 )
 
 # ─── Application status classification ───────────────────────────────────────
 # Checked in priority order: first match wins.
 
 STATUS_PATTERNS = [
-    (r"pleased to offer|offer of employment|extend.*offer|we.*like to offer|offer letter|job offer", "offer"),
-    (r"invite.*interview|schedule.*interview|interview.*invitation|would like to interview|phone screen|moving.*forward.*interview", "interview"),
-    (r"unfortunately|regret|not.*moving forward|decided.*not|no longer|other candidate", "rejected"),
-    (r"received your application|thank you for apply|application.*received|we have received", "applied"),
+    # Offer — requires explicit language about extending/receiving a job offer to the candidate
+    # Intentionally excludes "job offer" and "offer letter" alone — too common in marketing text
+    (
+        r"pleased to offer you|offer of employment|we.*like to extend.*offer|"
+        r"extend an offer|we are offering you|formal offer|conditional offer|"
+        r"we.*would like to offer you",
+        "offer",
+    ),
+    # Interview — requires invitation or scheduling language
+    (
+        r"invite.*interview|schedule.*interview|interview.*invitation|"
+        r"would like to interview|phone screen|moving.*forward.*interview|"
+        r"invite you to.*interview",
+        "interview",
+    ),
+    # Rejected — explicit declination language
+    (
+        r"unfortunately|regret to inform|not.*moving forward|decided.*not to move|"
+        r"no longer.*consider|other candidate|position has been filled|"
+        r"will not be moving",
+        "rejected",
+    ),
+    # Applied — confirmation of receipt
+    (
+        r"received your application|thank you for apply|application.*received|"
+        r"we have received|application.*submitted|application.*complete",
+        "applied",
+    ),
 ]
 
 # ─── Platform source mapping ──────────────────────────────────────────────────
@@ -57,6 +81,7 @@ DOMAIN_SOURCE_MAP = {
     "micro1.ai":              "Micro1",
     "userinterviews.com":     "User Interviews",
     "ultipro.com":            "UKG Pro",
+    "indeed.com":             "Indeed",
 }
 
 # ─── ATS domains ──────────────────────────────────────────────────────────────
@@ -72,6 +97,7 @@ ATS_DOMAINS = {
     "applytojob.com", "ziprecruiter.com", "newtonsoftware.com",
     "lattice.com", "workable.com", "jobvite.com", "recruitee.com",
     "ultipro.com", "ultipro.innovationcu.ca",
+    "indeed.com",
 }
 
 # Personal email domains — not associated with a company.
@@ -80,6 +106,26 @@ PERSONAL_DOMAINS = {"gmail", "yahoo", "hotmail", "outlook", "icloud", "me", "goo
 # Trailing words in ATS sender display names that identify the ATS, not the company.
 HIRING_NOISE_RE = re.compile(
     r"\s+(?:hiring\s+team|careers?|hr|hires?|recruiting|talent(?:\s+acquisition)?|jobs?|notifications?)\s*$",
+    re.IGNORECASE,
+)
+
+# ─── Indeed Apply ────────────────────────────────────────────────────────────
+# Job posting URLs sit in href attributes in the raw HTML, e.g.:
+# href="https://ca.indeed.com/viewjob?jk=abc123"
+INDEED_JOB_URL_FROM_HTML_RE = re.compile(
+    r'href=["\']?(https://[a-z.]*indeed\.com/(?:viewjob|rc/clk)[^"\'>\s]*)',
+    re.IGNORECASE,
+)
+
+# Subject: "Indeed Application: Intermediate Front-End Developer"
+INDEED_SUBJECT_POSITION_RE = re.compile(
+    r"Indeed Application:\s*(.+)",
+    re.IGNORECASE,
+)
+
+# Body: "The following items were sent to Canadian Cattle Identification Agency (CCIA). Good luck!"
+INDEED_BODY_COMPANY_RE = re.compile(
+    r"sent to (.+?)(?:\s*\([^)]+\))?\.",
     re.IGNORECASE,
 )
 
@@ -175,6 +221,8 @@ PLATFORM_VALIDATION: dict[str, list[str] | None] = {
     ],
     # Research study platform — never a job application
     "userinterviews.com": None,
+    # Indeed Apply confirmation emails (sender: indeedapply@indeed.com)
+    "indeed.com": [r"indeed application", r"sent to"],
 }
 
 # ─── Position validation ──────────────────────────────────────────────────────
