@@ -12,13 +12,16 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Wake up server
+        run: curl -s --max-time 60 "${{ secrets.API_URL }}/" || true
+
       - name: Call scan endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ secrets.API_URL }}/api/emails/scan/all" \
             -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
-            --max-time 30)
+            --max-time 60)
 
           http_code=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n-1)
