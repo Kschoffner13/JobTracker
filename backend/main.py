@@ -15,7 +15,7 @@ app = FastAPI(title="Job Tracker API", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "https://job-tracker-lczpqw8qb-kschoffner-9548s-projects.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
