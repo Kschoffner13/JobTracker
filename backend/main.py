@@ -19,6 +19,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://job-tracker-pzxqxt516-kschoffner-9548s-projects.vercel.app",
+        "https://job-tracker-six-lyart.vercel.app/",
     ],
     allow_credentials=True,
     allow_methods=["*"],
