@@ -10,15 +10,42 @@
   max-width: 420px;
   width: 100%;
   padding: 48px 40px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: float-in 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
 
   h1 {
     margin: 0;
+    padding-bottom: 12px;
+    background: linear-gradient(135deg, #a78bfa 0%, #60a5fa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  p {
+    color: #94a3b8;
+  }
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -29,35 +56,65 @@
   gap: 10px;
   width: 100%;
   padding: 12px 20px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
   font-size: 16px;
   cursor: pointer;
-  transition: box-shadow 0.2s, border-color 0.2s;
+  transition: all 0.2s ease;
   margin-top: 8px;
 
   &:hover:not(:disabled) {
-    box-shadow: var(--shadow);
-    border-color: var(--accent-border);
+    background: rgba(139, 92, 246, 0.15);
+    border-color: rgba(139, 92, 246, 0.5);
+    box-shadow: 0 0 28px rgba(139, 92, 246, 0.28);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   &:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 }
 
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-note {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+}
+
 .error {
-  color: #ef4444;
+  color: #f87171;
   font-size: 14px;
   margin: 0;
+  padding: 10px 14px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 8px;
 }
 
 .disclaimer {
   font-size: 13px;
-  opacity: 0.65;
+  color: #475569;
   margin: 0;
 }
 
@@ -73,7 +130,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 32px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 
   h1 {
     margin: 0;
@@ -91,20 +148,22 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .logout-btn {
   padding: 6px 14px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
   font-size: 14px;
   cursor: pointer;
-  transition: box-shadow 0.2s;
+  transition: all 0.2s;
 
   &:hover {
-    box-shadow: var(--shadow);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
   }
 }
 
@@ -126,18 +185,21 @@
   padding: 10px 24px;
   border-radius: 8px;
   border: none;
-  background: var(--accent);
+  background: linear-gradient(135deg, #8b5cf6, #3b82f6);
   color: #fff;
   font-size: 15px;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.4);
 
   &:hover:not(:disabled) {
-    opacity: 0.85;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 28px rgba(139, 92, 246, 0.55);
   }
 
   &:disabled {
-    opacity: 0.6;
+    background: rgba(100, 116, 139, 0.4);
+    box-shadow: none;
     cursor: not-allowed;
   }
 }
@@ -155,13 +217,22 @@
 }
 
 .email-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   text-align: left;
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    border-color: rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
+  }
 }
 
 .email-meta {
@@ -182,8 +253,7 @@
 
 .email-date {
   font-size: 12px;
-  color: var(--text);
-  opacity: 0.65;
+  color: #475569;
   white-space: nowrap;
 }
 

@@ -26,19 +26,19 @@ const LIGHT = {
   barTrack: "#f1f5f9",
 };
 const DARK = {
-  pageBg: "#0f172a",
-  surface: "#1e293b",
-  border: "#334155",
-  headerBg: "#1e293b",
-  theadBg: "#162032",
-  rowBorder: "#1e2d42",
+  pageBg: "transparent",
+  surface: "rgba(255, 255, 255, 0.04)",
+  border: "rgba(255, 255, 255, 0.08)",
+  headerBg: "rgba(8, 8, 20, 0.85)",
+  theadBg: "rgba(255, 255, 255, 0.02)",
+  rowBorder: "rgba(255, 255, 255, 0.04)",
   text: "#f1f5f9",
   textMuted: "#94a3b8",
   textFaint: "#64748b",
-  statBorder: "#334155",
-  btnBorder: "#334155",
+  statBorder: "rgba(255, 255, 255, 0.1)",
+  btnBorder: "rgba(255, 255, 255, 0.1)",
   btnText: "#94a3b8",
-  barTrack: "#0f172a",
+  barTrack: "rgba(255, 255, 255, 0.05)",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -55,11 +55,14 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 function StatusBadge({ status }: { status: string }) {
+  const color = STATUS_COLOR[status] ?? "#6b7280";
   return (
     <span
       style={{
-        background: STATUS_COLOR[status] ?? "#6b7280",
-        color: "#fff",
+        background: `${color}22`,
+        color: color,
+        border: `1px solid ${color}55`,
+        boxShadow: `0 0 8px ${color}44`,
         borderRadius: "9999px",
         padding: "2px 10px",
         fontSize: 12,
@@ -92,10 +95,14 @@ function MetricCard({
       style={{
         background: t.surface,
         border: `1px solid ${t.statBorder}`,
+        borderTop: `2px solid ${color}`,
+        boxShadow: `0 0 20px ${color}22, 0 4px 16px rgba(0,0,0,0.3)`,
         borderRadius: 12,
         padding: "16px 24px",
         flex: "1 1 160px",
         minWidth: 140,
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
       }}
     >
       <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
@@ -134,6 +141,9 @@ function AnalyticsView({
     borderRadius: 12,
     padding: 24,
     marginBottom: 20,
+    backdropFilter: "blur(12px)" as const,
+    WebkitBackdropFilter: "blur(12px)" as const,
+    boxShadow: "0 4px 24px rgba(0,0,0,0.3)" as const,
   };
 
   return (
@@ -224,9 +234,10 @@ function AnalyticsView({
                   style={{
                     height: "100%",
                     width: `${pct}%`,
-                    background: s.color,
+                    background: `linear-gradient(90deg, ${s.color}, ${s.color}bb)`,
+                    boxShadow: `0 0 10px ${s.color}88`,
                     borderRadius: 4,
-                    transition: "width 0.4s ease",
+                    transition: "width 0.6s ease",
                   }}
                 />
               </div>
@@ -286,7 +297,8 @@ function AnalyticsView({
                     style={{
                       width: "100%",
                       height,
-                      background: "#3b82f6",
+                      background: "linear-gradient(to top, #8b5cf6, #3b82f6)",
+                      boxShadow: "0 0 10px rgba(139,92,246,0.5)",
                       borderRadius: "4px 4px 0 0",
                       minHeight: 4,
                     }}
@@ -323,8 +335,16 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [darkMode, setDarkMode] = useState(
-    () => localStorage.getItem("darkMode") === "true",
+    () => localStorage.getItem("darkMode") !== "false",
   );
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type })
@@ -350,12 +370,15 @@ export function Dashboard() {
     });
 
   const loadApplications = async (showRefresh = false) => {
-    if (!token) return;
+    if (!token) return [];
     if (showRefresh) setRefreshing(true);
     try {
-      setApplications(await getApplications(token));
+      const apps = await getApplications(token);
+      setApplications(apps);
+      return apps;
     } catch {
       setError("Failed to load applications.");
+      return [];
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -390,19 +413,16 @@ export function Dashboard() {
     if (!token) return;
     setScanning(true);
     setError(null);
+    const prevCount = applications.length;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+    let scanSucceeded = false;
 
     try {
-      const result = await scanEmails(token, controller.signal);
+      await scanEmails(token, controller.signal);
       clearTimeout(timeout);
-      showToast(
-        result.emails.length === 0
-          ? 'No new emails found'
-          : `${result.emails.length} new email${result.emails.length !== 1 ? 's' : ''} ingested`,
-        'success'
-      )
+      scanSucceeded = true;
     } catch (err) {
       clearTimeout(timeout);
       const isTimeout = err instanceof Error && err.name === "AbortError";
@@ -411,10 +431,19 @@ export function Dashboard() {
           ? 'Scan timed out — Databricks warehouse may be waking up. Try again in a minute.'
           : 'Scan failed. Please try again.',
         'error'
-      )
+      );
     } finally {
       setScanning(false);
-      await loadApplications(true);
+      const newApps = await loadApplications(true);
+      if (scanSucceeded) {
+        const diff = newApps.length - prevCount;
+        showToast(
+          diff <= 0
+            ? 'No new jobs found'
+            : `${diff} new job${diff !== 1 ? 's' : ''} found`,
+          'success'
+        );
+      }
       if (tab === "analytics") await loadAnalytics();
     }
   };
@@ -442,10 +471,10 @@ export function Dashboard() {
   };
 
   const inputStyle = {
-    padding: "7px 10px",
-    borderRadius: 6,
+    padding: "7px 12px",
+    borderRadius: 8,
     border: `1px solid ${t.border}`,
-    background: t.surface,
+    background: "rgba(255,255,255,0.05)",
     color: t.text,
     fontSize: 13,
     outline: "none",
@@ -484,7 +513,8 @@ export function Dashboard() {
         cursor: "pointer",
         fontWeight: 600,
         fontSize: 14,
-        background: tab === id ? "#3b82f6" : "transparent",
+        background: tab === id ? "linear-gradient(135deg, #8b5cf6, #3b82f6)" : "transparent",
+        boxShadow: tab === id ? "0 0 16px rgba(139,92,246,0.4)" : "none",
         color: tab === id ? "#fff" : t.textMuted,
         transition: "all 0.15s",
       }}
@@ -497,13 +527,43 @@ export function Dashboard() {
     <>
     <style>{`
       @keyframes jt-spin { to { transform: rotate(360deg); } }
-      @keyframes jt-pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
-      @keyframes jt-faderow { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
+      @keyframes jt-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+      @keyframes jt-faderow { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
       @keyframes jt-toast-in { from { transform:translateX(110%); opacity:0; } to { transform:translateX(0); opacity:1; } }
-      .jt-row { animation: jt-faderow 0.2s ease both; }
-      .jt-row:hover > td { background: rgba(148,163,184,0.07) !important; transition: background 0.15s; }
-      .jt-scan-btn { transition: filter 0.15s, box-shadow 0.15s, transform 0.15s; }
-      .jt-scan-btn:hover:not(:disabled) { filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 4px 14px rgba(59,130,246,0.4); }
+      .jt-row { animation: jt-faderow 0.25s ease both; }
+      .jt-row:hover > td { background: rgba(139,92,246,0.06) !important; transition: background 0.15s; }
+      .jt-scan-btn { transition: box-shadow 0.2s ease, transform 0.15s ease; }
+      .jt-scan-btn:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 8px 28px rgba(139,92,246,0.55) !important; }
+      @keyframes jt-tab-in { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+      .jt-tab-panel { animation: jt-tab-in 0.25s cubic-bezier(0.16,1,0.3,1) both; }
+      .jt-select {
+        appearance: none; -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 10px center;
+        padding-right: 30px; cursor: pointer;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .jt-select:hover, .jt-input:hover { border-color: rgba(139,92,246,0.45) !important; }
+      .jt-select:focus, .jt-input:focus { outline: none; border-color: rgba(139,92,246,0.65) !important; box-shadow: 0 0 0 3px rgba(139,92,246,0.15) !important; }
+      .jt-select option { background: #0f0f1a; color: #f1f5f9; }
+      .jt-input { transition: border-color 0.2s, box-shadow 0.2s; cursor: pointer; }
+      .jt-input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+      @media (max-width: 768px) {
+        .jt-col-hide { display: none !important; }
+        .jt-main { padding: 16px !important; }
+        .jt-stats { display: grid !important; grid-template-columns: 1fr 1fr; gap: 12px !important; width: 100%; }
+        .jt-top-bar { flex-direction: column !important; align-items: stretch !important; gap: 12px !important; }
+        .jt-scan-row { flex-direction: row !important; align-items: center !important; justify-content: center !important; width: 100% !important; }
+        .jt-tab-bar { width: 100% !important; }
+        .jt-tab-bar button { flex: 1 !important; }
+        .jt-filter-toggle { display: flex !important; }
+        .jt-filter-controls { flex-direction: column !important; }
+        .jt-filter-controls select, .jt-filter-controls input { width: 100%; box-sizing: border-box; }
+      }
+      @media (min-width: 769px) {
+        .jt-filter-toggle { display: none !important; }
+        .jt-export-mobile { display: none !important; }
+      }
     `}</style>
     <div
       style={{
@@ -517,15 +577,26 @@ export function Dashboard() {
       <header
         style={{
           background: t.headerBg,
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
           borderBottom: `1px solid ${t.border}`,
           padding: "0 24px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           height: 60,
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: t.text }}>
+        <h1 style={{
+          margin: 0, fontSize: 20, fontWeight: 700,
+          background: "linear-gradient(135deg, #a78bfa, #60a5fa)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+        }}>
           JobTracker
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -571,10 +642,12 @@ export function Dashboard() {
       </header>
 
       <main
+        className="jt-main"
         style={{ maxWidth: "95vw", margin: "0 auto", padding: "24px 32px" }}
       >
         {/* Stats + Scan */}
         <div
+          className="jt-top-bar"
           style={{
             display: "flex",
             alignItems: "center",
@@ -584,7 +657,7 @@ export function Dashboard() {
             gap: 16,
           }}
         >
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div className="jt-stats" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {[
               { label: "Total", value: counts.total, color: t.text },
               { label: "Interview", value: counts.interview, color: "#f59e0b" },
@@ -596,10 +669,14 @@ export function Dashboard() {
                 style={{
                   background: t.surface,
                   border: `1px solid ${t.statBorder}`,
+                  borderTop: `2px solid ${s.color}`,
+                  boxShadow: `0 0 16px ${s.color}22`,
                   borderRadius: 10,
                   padding: "12px 20px",
                   minWidth: 90,
                   textAlign: "center",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
                 }}
               >
                 <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>
@@ -612,6 +689,7 @@ export function Dashboard() {
             ))}
           </div>
           <div
+            className="jt-scan-row"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -625,13 +703,15 @@ export function Dashboard() {
               disabled={scanning}
               style={{
                 padding: "10px 22px",
-                background: scanning ? "#94a3b8" : "#3b82f6",
+                background: scanning ? "rgba(100,116,139,0.35)" : "linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 8,
                 fontWeight: 600,
                 fontSize: 14,
                 cursor: scanning ? "default" : "pointer",
+                boxShadow: scanning ? "none" : "0 0 20px rgba(139,92,246,0.45)",
+                transition: "all 0.2s ease",
               }}
             >
               {scanning && (
@@ -645,6 +725,21 @@ export function Dashboard() {
               )}
               {scanning ? 'Scanning...' : 'Scan Emails'}
             </button>
+            <button
+              className="jt-export-mobile"
+              onClick={exportCSV}
+              disabled={filtered.length === 0}
+              style={{
+                ...inputStyle,
+                cursor: filtered.length === 0 ? "default" : "pointer",
+                color: "#10b981",
+                borderColor: "#10b981",
+                opacity: filtered.length === 0 ? 0.4 : 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              ⬇ Export CSV
+            </button>
             {error && (
               <span style={{ fontSize: 13, color: "#ef4444" }}>{error}</span>
             )}
@@ -653,6 +748,7 @@ export function Dashboard() {
 
         {/* Tabs */}
         <div
+          className="jt-tab-bar"
           style={{
             display: "flex",
             gap: 4,
@@ -662,6 +758,8 @@ export function Dashboard() {
             borderRadius: 10,
             padding: 4,
             width: "fit-content",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
           }}
         >
           {tabBtn("applications", "Applications")}
@@ -670,96 +768,109 @@ export function Dashboard() {
 
         {/* Applications tab */}
         {tab === "applications" && (
-          <>
+          <div key="applications" className="jt-tab-panel">
             {/* Filters */}
-            <div
-              style={{
-                display: "flex",
-                gap: 12,
-                marginBottom: 16,
-                flexWrap: "wrap",
-                alignItems: "center",
-              }}
-            >
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">All Statuses</option>
-                <option value="applied">Applied</option>
-                <option value="interview">Interview</option>
-                <option value="offer">Offer</option>
-                <option value="rejected">Rejected</option>
-              </select>
-              <select
-                value={filterSource}
-                onChange={(e) => setFilterSource(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">All Sources</option>
-                {uniqueSources.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <label style={{ fontSize: 12, color: t.textMuted }}>From</label>
-                <input
-                  type="date"
-                  value={filterFrom}
-                  onChange={(e) => setFilterFrom(e.target.value)}
-                  style={inputStyle}
-                />
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <label style={{ fontSize: 12, color: t.textMuted }}>To</label>
-                <input
-                  type="date"
-                  value={filterTo}
-                  onChange={(e) => setFilterTo(e.target.value)}
-                  style={inputStyle}
-                />
-              </div>
-              {(filterStatus || filterSource || filterFrom || filterTo) && (
-                <button
-                  onClick={() => {
-                    setFilterStatus("");
-                    setFilterSource("");
-                    setFilterFrom("");
-                    setFilterTo("");
-                  }}
-                  style={{
-                    ...inputStyle,
-                    cursor: "pointer",
-                    color: "#ef4444",
-                    borderColor: "#ef4444",
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-              <span
-                style={{ fontSize: 13, color: t.textFaint, marginLeft: "auto" }}
-              >
-                {filtered.length} of {applications.length} application
-                {applications.length !== 1 ? "s" : ""}
-              </span>
+            <div style={{ marginBottom: 16 }}>
+              {/* Mobile toggle */}
               <button
-                onClick={exportCSV}
-                disabled={filtered.length === 0}
+                className="jt-filter-toggle"
+                onClick={() => setFiltersOpen(o => !o)}
                 style={{
                   ...inputStyle,
-                  cursor: filtered.length === 0 ? "default" : "pointer",
-                  color: "#10b981",
-                  borderColor: "#10b981",
-                  opacity: filtered.length === 0 ? 0.4 : 1,
-                  whiteSpace: "nowrap",
+                  width: "100%",
+                  cursor: "pointer",
+                  justifyContent: "space-between",
+                  display: "flex",
+                  marginBottom: filtersOpen ? 10 : 0,
                 }}
               >
-                ⬇ Export CSV
+                <span>
+                  Filters
+                  {(filterStatus || filterSource || filterFrom || filterTo)
+                    ? ` (${[filterStatus, filterSource, filterFrom, filterTo].filter(Boolean).length} active)`
+                    : ""}
+                </span>
+                <span>{filtersOpen ? "▲" : "▼"}</span>
               </button>
+
+              {/* Controls — always visible desktop, toggle on mobile */}
+              {(!isMobile || filtersOpen) && (
+                <div
+                  className="jt-filter-controls"
+                  style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
+                >
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="jt-select"
+                    style={inputStyle}
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="applied">Applied</option>
+                    <option value="interview">Interview</option>
+                    <option value="offer">Offer</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                  <select
+                    value={filterSource}
+                    onChange={(e) => setFilterSource(e.target.value)}
+                    className="jt-select"
+                    style={inputStyle}
+                  >
+                    <option value="">All Sources</option>
+                    {uniqueSources.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <label style={{ fontSize: 12, color: t.textMuted }}>From</label>
+                    <input
+                      type="date"
+                      value={filterFrom}
+                      onChange={(e) => setFilterFrom(e.target.value)}
+                      className="jt-input"
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <label style={{ fontSize: 12, color: t.textMuted }}>To</label>
+                    <input
+                      type="date"
+                      value={filterTo}
+                      onChange={(e) => setFilterTo(e.target.value)}
+                      className="jt-input"
+                      style={inputStyle}
+                    />
+                  </div>
+                  {(filterStatus || filterSource || filterFrom || filterTo) && (
+                    <button
+                      onClick={() => { setFilterStatus(""); setFilterSource(""); setFilterFrom(""); setFilterTo(""); }}
+                      style={{ ...inputStyle, cursor: "pointer", color: "#ef4444", borderColor: "#ef4444" }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <span style={{ fontSize: 13, color: t.textFaint, marginLeft: "auto" }}>
+                    {filtered.length} of {applications.length} application{applications.length !== 1 ? "s" : ""}
+                  </span>
+                  {!isMobile && (
+                    <button
+                      onClick={exportCSV}
+                      disabled={filtered.length === 0}
+                      style={{
+                        ...inputStyle,
+                        cursor: filtered.length === 0 ? "default" : "pointer",
+                        color: "#10b981",
+                        borderColor: "#10b981",
+                        opacity: filtered.length === 0 ? 0.4 : 1,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      ⬇ Export CSV
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Table */}
@@ -769,6 +880,9 @@ export function Dashboard() {
                 border: `1px solid ${t.border}`,
                 borderRadius: 12,
                 overflow: "hidden",
+                backdropFilter: "blur(12px)",
+                WebkitBackdropFilter: "blur(12px)",
+                boxShadow: "0 4px 24px rgba(0,0,0,0.35)",
               }}
             >
               <table
@@ -806,6 +920,7 @@ export function Dashboard() {
                     ].map((h, i) => (
                       <th
                         key={i}
+                        className={[2, 4, 5].includes(i) ? "jt-col-hide" : ""}
                         style={{
                           padding: "12px 16px",
                           textAlign: "center",
@@ -830,7 +945,7 @@ export function Dashboard() {
                       <tr key={i} style={{ borderBottom: `1px solid ${t.rowBorder}` }}>
                         <td style={{ padding: '14px 8px' }} />
                         {[70, 55, 60, 50, 45].map((w, j) => (
-                          <td key={j} style={{ padding: '14px 16px' }}>
+                          <td key={j} className={[1, 3, 4].includes(j) ? "jt-col-hide" : ""} style={{ padding: '14px 16px' }}>
                             <div style={{ height: 13, borderRadius: 4, background: t.barTrack, width: `${w}%`, animation: `jt-pulse 1.4s ease-in-out ${i * 0.1}s infinite` }} />
                           </td>
                         ))}
@@ -861,10 +976,10 @@ export function Dashboard() {
                             }}>▶</span>
                           </td>
                           <td style={{ padding: "12px 16px", fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.company}</td>
-                          <td style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.position ?? <span style={{ color: t.textFaint }}>—</span>}</td>
+                          <td className="jt-col-hide" style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.position ?? <span style={{ color: t.textFaint }}>—</span>}</td>
                           <td style={{ padding: "12px 16px", textAlign: "center" }}><StatusBadge status={app.current_status} /></td>
-                          <td style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.source ?? "—"}</td>
-                          <td style={{ padding: "12px 16px", color: t.textFaint, whiteSpace: "nowrap", textAlign: "center" }}>{formatDate(app.applied_at)}</td>
+                          <td className="jt-col-hide" style={{ padding: "12px 16px", color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.source ?? "—"}</td>
+                          <td className="jt-col-hide" style={{ padding: "12px 16px", color: t.textFaint, whiteSpace: "nowrap", textAlign: "center" }}>{formatDate(app.applied_at)}</td>
                           <td style={{ padding: "8px 12px", textAlign: "center" }}>
                             <button onClick={e => { e.stopPropagation(); setEditingApp(app) }} title="Edit"
                               style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: t.textFaint, padding: "4px 6px", borderRadius: 4 }}>✏️</button>
@@ -880,7 +995,23 @@ export function Dashboard() {
                             }}>
                               <div style={{ padding: "14px 16px 16px 48px", background: t.theadBg }}>
                                 {/* Meta row */}
-                                <div style={{ display: "flex", gap: 32, marginBottom: 14 }}>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 14 }}>
+                                  {isMobile && (
+                                    <>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Position</div>
+                                        <div style={{ fontSize: 13, color: t.text }}>{app.position ?? <span style={{ color: t.textFaint }}>—</span>}</div>
+                                      </div>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Source</div>
+                                        <div style={{ fontSize: 13, color: t.textMuted }}>{app.source ?? "—"}</div>
+                                      </div>
+                                      <div>
+                                        <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Applied</div>
+                                        <div style={{ fontSize: 13, color: t.textFaint }}>{formatDate(app.applied_at)}</div>
+                                      </div>
+                                    </>
+                                  )}
                                   <div>
                                     <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Job Type</div>
                                     <div style={{ fontSize: 13, color: t.text }}>{app.job_type ?? <span style={{ color: t.textFaint }}>—</span>}</div>
@@ -906,26 +1037,25 @@ export function Dashboard() {
                 </tbody>
               </table>
             </div>
-          </>
+          </div>
         )}
 
         {/* Analytics tab */}
-        {tab === "analytics" &&
-          (analyticsLoading ? (
-            <div
-              style={{ padding: 60, textAlign: "center", color: t.textFaint }}
-            >
-              Loading analytics...
-            </div>
-          ) : analytics ? (
-            <AnalyticsView analytics={analytics} t={t} />
-          ) : (
-            <div
-              style={{ padding: 60, textAlign: "center", color: t.textFaint }}
-            >
-              No data yet — scan your emails first.
-            </div>
-          ))}
+        {tab === "analytics" && (
+          <div key="analytics" className="jt-tab-panel">
+            {analyticsLoading ? (
+              <div style={{ padding: 60, textAlign: "center", color: t.textFaint }}>
+                Loading analytics...
+              </div>
+            ) : analytics ? (
+              <AnalyticsView analytics={analytics} t={t} />
+            ) : (
+              <div style={{ padding: 60, textAlign: "center", color: t.textFaint }}>
+                No data yet — scan your emails first.
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {editingApp && (
@@ -943,9 +1073,14 @@ export function Dashboard() {
       {toast && (
         <div style={{
           position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-          background: toast.type === 'success' ? '#10b981' : '#ef4444',
-          color: '#fff', borderRadius: 10, padding: '12px 20px',
-          fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+          background: toast.type === 'success' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: `1px solid ${toast.type === 'success' ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)'}`,
+          boxShadow: `0 0 24px ${toast.type === 'success' ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}`,
+          color: toast.type === 'success' ? '#34d399' : '#f87171',
+          borderRadius: 10, padding: '12px 20px',
+          fontSize: 14, fontWeight: 500,
           animation: 'jt-toast-in 0.3s ease',
           maxWidth: 360,
         }}>

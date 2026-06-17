@@ -38,9 +38,14 @@ export function LoginPage() {
           onClick={() => handleLogin()}
           disabled={loading}
         >
-          <GoogleIcon />
+          {loading ? <span className="spinner" /> : <GoogleIcon />}
           {loading ? 'Signing in...' : 'Sign in with Google'}
         </button>
+        {loading && (
+          <p className="loading-note">
+            This may take a minute while the server warms up. Please don't close this page.
+          </p>
+        )}
         {error && <p className="error">{error}</p>}
         <p className="disclaimer">
           We only read emails to detect job applications. We never send emails on your behalf.
