@@ -48,11 +48,13 @@ backend/
 
 ## Data Architecture
 
-### Scan pipeline (per request)
+### Scan pipeline — two paths, same destination
+
+**Fast path (per request)** — `POST /api/emails/scan` and the GitHub Actions cron both go through this. Classification happens in memory and Postgres is written first, so the UI sees results immediately; Databricks is updated afterward and isn't on the hot path:
 
 ```
 Gmail API
-    │  (classified in memory — no Databricks in the hot path)
+    │  classified in memory
     ▼
 Postgres (Supabase)           ← written synchronously, UI reads from here
     │
@@ -62,6 +64,22 @@ Databricks Bronze/Silver      ← written after response is returned
     ▼  (background task)
 Databricks Gold               ← star schema rebuilt from Postgres
 ```
+
+**Scheduled path (Databricks notebooks)** — runs independently on its own schedule (`jobs/`), in the strict medallion order:
+
+```
+Gmail API
+    ▼
+Databricks Bronze     (email_sync.py — raw email ingestion)
+    ▼
+Databricks Silver     (bronze_to_silver.py — classify company/status/position)
+    ▼
+Postgres              (silver_to_postgres.py — upsert companies/applications/status_events)
+    ▼
+Databricks Gold       (rebuild_gold.py — full star-schema rebuild from Postgres)
+```
+
+Both paths write to the same Postgres tables and dedupe against each other by `message_id`/`source_email_id`, so running either one (or both) is safe — no duplicate rows.
 
 ### Databricks — Medallion (Delta Lake)
 
